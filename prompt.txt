@@ -1,0 +1,68 @@
+**Prompt for LLM: On-Chain Address Clustering Analysis**
+
+**Objective:**
+Analyze the provided transaction data to identify clusters of blockchain addresses that likely belong to the same entity or are acting in a highly coordinated manner. Output these clusters with an assigned confidence level.
+
+**Input Data:**
+You will be provided with a dataset of blockchain events. Each row represents an event and includes the following columns: `block_number`, `event_type`, `from_address`, `to_address`, `value_formatted`, `transaction_type`, `initiators`.
+* For `Transfer` events, use `from_address` and `to_address`.
+* For `Mint` and `V2_Swap` events, the primary actor is in the `initiators` column. The `from_address` and `to_address` in `V2_Swap` events usually represent the liquidity pool and the recipient of the swapped tokens, respectively, with the `initiators` being the EOA triggering the swap.
+
+**Methodology to Follow (Perform these steps in sequence):**
+
+**Phase 1: Identify Key Seed Addresses and Direct Transfer Links**
+1.  **Identify Original Token Source(s) ("Source Addresses"):**
+    * Scan `Transfer` events: If `from_address` is `0x0000000000000000000000000000000000000000`, the `to_address` is an initial token recipient.
+    * Scan `Mint` events: The `initiators` address is a minter.
+    * List these as "Source Addresses."
+2.  **Map Direct Funding/Token Movements from Source Addresses:**
+    * Identify `Transfer` events where `from_address` is a "Source Address." The `to_address` in these transfers is directly linked. Document these links.
+    * Recursively trace further `Transfer` events if a recipient becomes a sender to new addresses.
+3.  **Map Direct Transfers Between Any Active Addresses:**
+    * Identify all unique addresses appearing as `initiators` in `V2_Swap` events ("Swappers").
+    * Look for `Transfer` events where both `from_address` and `to_address` are "Swappers," "Source Addresses," or addresses already linked to Source Addresses. Document these direct peer-to-peer links.
+
+**Phase 2: Cluster Based on Coordinated On-Chain Activity (Swaps)**
+4.  **Same Block, Identical Swap Action:**
+    * For each `block_number`, group `initiators` of `V2_Swap` events who performed the *exact same action* (identical `transaction_type` AND identical `value_formatted`).
+    * List these groups as initial potential clusters.
+5.  **Coordinated Buy-Sell Patterns:**
+    * For each `initiators` (especially those in groups from step 4), track their `V2_Swap` BUY events and subsequent `V2_Swap` SELL events, noting `block_number` and `value_formatted`.
+    * Identify sets of addresses that BUY around the same `block_number`(s) and then SELL around the same `block_number`(s), particularly if `value_formatted` (for buys or sells) are similar or show a clear relationship.
+6.  **Distinct Interaction Patterns (Self-Interaction Swaps):**
+    * Identify `V2_Swap` events where the `initiators` address is the same as the `from_address` AND the `to_address` in the event log. This indicates a specific type of swap interaction. Note addresses exhibiting this pattern.
+
+**Phase 3: Consolidate and Refine Clusters & Assign Confidence**
+7.  **Build and Merge Clusters:**
+    * Start with individual addresses.
+    * Merge addresses into clusters if they are linked by:
+        * Direct `Transfer` (from Phase 1).
+        * Participation in the same "Same Block, Identical Swap Action" group (Phase 2, Step 4).
+        * Strong, temporally correlated Buy-Sell patterns involving multiple addresses from the same initial group (Phase 2, Step 5).
+        * Being a "Source Address" and having direct or strong temporal links to swappers.
+8.  **Assign Confidence Level to each Cluster:**
+    * **High Confidence:**
+        * Addresses directly funded by a "Source Address" AND exhibiting multiple coordinated swap actions (e.g., same block identical buys + coordinated sells later).
+        * A group of addresses performing identical swaps in the same block as a "Source Address" `Mint` event, and also showing coordinated selling.
+        * Multiple addresses linked by several strong heuristics (e.g., direct transfers between them AND coordinated swaps).
+    * **Medium Confidence:**
+        * Addresses performing identical swaps in the same block (but no direct link to a Source Address or clear follow-up coordinated selling by the *entire* group).
+        * Addresses linked by a clear, direct peer-to-peer `Transfer` event (and both are active swappers).
+        * Addresses showing a strong, coordinated Buy-Sell pattern as a pair/small group, without other strong links.
+    * **Low Confidence:**
+        * Addresses linked by only one weaker heuristic (e.g., similar timing of swaps but not identical values, or an isolated "Self-Interaction Swap" pattern without other corroborating links to a cluster).
+        * A single address that is a "Source Address" but has no other strong links to swappers in *this dataset*.
+
+**Output Structure:**
+Please provide the output as a JSON list of clusters. Each cluster object should contain:
+* `cluster_id`: A unique identifier for the cluster (e.g., "Cluster_1").
+* `addresses`: A list of blockchain addresses (strings) belonging to this cluster.
+* `confidence_level`: A string ("High", "Medium", or "Low").
+* `reasoning`: A brief explanation of the primary reasons for grouping these addresses and assigning the confidence level, referencing steps from the methodology (e.g., "Linked by direct transfer from Source Address X and coordinated V2_Swaps in block YYYY," or "Multiple initiators performed identical V2_Swap BUYs of Z value in block YYYY and subsequently sold in block ZZZZ.").
+
+**Handling No Clusters:**
+If no significant clusters are identified based on the methodology, or if all potential links result in Low confidence, you can either:
+* Return an empty list: `[]`
+* OR return clusters with "Low" confidence, clearly stating the weak nature of the link in the `reasoning`.
+
+**Begin Analysis with the provided dataset.**
