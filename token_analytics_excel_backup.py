@@ -189,12 +189,7 @@ class WashTradingDetector:
                 pool_addresses = set()
                 for _, swap in swap_events.iterrows():
                     if 'pair_address' in swap and swap['pair_address']:
-                        # Clean pool addresses to ensure consistent case
-                        clean_pool_addr = self.clean_address(swap['pair_address'])
-                        if clean_pool_addr:  # Only add if cleaning was successful
-                            pool_addresses.add(clean_pool_addr)
-                
-                print(f"      🏊 DEBUG: Cleaned pool addresses: {pool_addresses}")
+                        pool_addresses.add(swap['pair_address'])
                 
                 # Analyze transfers to determine transaction type and initiators
                 buy_initiators = []
@@ -210,23 +205,12 @@ class WashTradingDetector:
                     clean_from = self.clean_address(transfer_from)
                     clean_to = self.clean_address(transfer_to)
                     
-                    print(f"      🔍 DEBUG: Comparing addresses:")
-                    print(f"         clean_from: '{clean_from}'")
-                    print(f"         clean_to: '{clean_to}'")
-                    print(f"         pool_addresses: {pool_addresses}")
-                    print(f"         clean_from in pool_addresses: {clean_from in pool_addresses}")
-                    print(f"         clean_to in pool_addresses: {clean_to in pool_addresses}")
-                    
                     transfer_info = {
                         'from': clean_from,
                         'to': clean_to,
                         'value': transfer_value
                     }
                     transfer_analysis.append(transfer_info)
-                    print("transfer_analysis")
-                    print(transfer_analysis)
-                    print("pool_addresses")
-                    print(pool_addresses)
                     
                     # Determine if this is a buy or sell
                     if clean_from in pool_addresses:
@@ -259,7 +243,6 @@ class WashTradingDetector:
                 else:
                     # No clear buy/sell pattern, try to infer from swap participants
                     transaction_type = "SWAP"
-                    input("  ***   ")
                     # Use swap participants as fallback
                     swap_participants = []
                     for _, swap in swap_events.iterrows():
