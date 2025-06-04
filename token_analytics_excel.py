@@ -58,6 +58,9 @@ class WashTradingDetector:
     to identify potential market manipulation and artificial volume.
     """
     
+    # Hardcoded addresses for filtering
+    UNISWAP_V2_ROUTER = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"  # Uniswap V2 Router
+    
     def __init__(self):
         self.transaction_graph = nx.DiGraph()
         self.unified_timeline = []
@@ -159,10 +162,10 @@ class WashTradingDetector:
         print(f"      ✅ Created timeline with {len(timeline_df)} transactions")
         return timeline_df
     
-    def create_filtered_timeline(self, timeline_df: pd.DataFrame) -> pd.DataFrame:
-        """Create a filtered timeline that removes Transfer events that are part of swap transactions."""
+    def create_filtered_timeline(self, timeline_df: pd.DataFrame, token_address: str) -> pd.DataFrame:
+        """Create a filtered timeline that removes Transfer events that are part of swap transactions and match mint amounts."""
         
-        print("   🔍 Creating filtered timeline (removing transfers that are part of swaps)...")
+        print("   🔍 Creating filtered timeline (removing transfers that are part of swaps and match mint amounts)...")
         
         if timeline_df.empty:
             return timeline_df.copy()
@@ -176,6 +179,7 @@ class WashTradingDetector:
             # Check if this transaction has both swaps and transfers
             has_swap = any(group['event_type'].str.contains('Swap', na=False))
             has_transfer = any(group['event_type'] == 'Transfer')
+            has_mint = any(group['event_type'] == 'Mint')
             
             if has_swap and has_transfer:
                 # This transaction has both swaps and transfers
@@ -246,32 +250,70 @@ class WashTradingDetector:
                 transaction_type = "Unknown"
                 initiators = "Unknown"
                 
+                # Clean token address for comparison
+                clean_token_address = self.clean_address(token_address)
+                print(f"      🎯 DEBUG: Clean token address for filtering: '{clean_token_address}'")
+                
                 if buy_initiators and not sell_initiators:
                     transaction_type = "BUY"
-                    initiators = ", ".join(list(set(buy_initiators)))  # Remove duplicates
+                    # Filter out token address from initiators
+                    filtered_buy_initiators = [addr for addr in set(buy_initiators) if addr != clean_token_address]
+                    initiators = ", ".join(filtered_buy_initiators)
+                    print(f"      📈 DEBUG: BUY - Original initiators: {len(set(buy_initiators))}, After filtering token: {len(filtered_buy_initiators)}")
                 elif sell_initiators and not buy_initiators:
                     transaction_type = "SELL"
-                    initiators = ", ".join(list(set(sell_initiators)))  # Remove duplicates
+                    # Filter out token address from initiators
+                    filtered_sell_initiators = [addr for addr in set(sell_initiators) if addr != clean_token_address]
+                    initiators = ", ".join(filtered_sell_initiators)
+                    print(f"      📉 DEBUG: SELL - Original initiators: {len(set(sell_initiators))}, After filtering token: {len(filtered_sell_initiators)}")
                 elif buy_initiators and sell_initiators:
                     transaction_type = "MIXED"
                     all_initiators = list(set(buy_initiators + sell_initiators))
-                    initiators = ", ".join(all_initiators)
+                    # Filter out token address from initiators
+                    filtered_all_initiators = [addr for addr in all_initiators if addr != clean_token_address]
+                    initiators = ", ".join(filtered_all_initiators)
+                    print(f"      🔀 DEBUG: MIXED - Original initiators: {len(all_initiators)}, After filtering token: {len(filtered_all_initiators)}")
                 else:
                     # No clear buy/sell pattern, try to infer from swap participants
                     transaction_type = "SWAP"
-                    input("  ***   ")
+                    print(f"      🔄 DEBUG: No clear buy/sell pattern, using swap participants as fallback")
+                    
                     # Use swap participants as fallback
                     swap_participants = []
                     for _, swap in swap_events.iterrows():
                         if 'sender' in swap and swap['sender']:
-                            swap_participants.append(self.clean_address(swap['sender']))
+                            participant = self.clean_address(swap['sender'])
+                            if participant != clean_token_address:  # Filter out token address
+                                swap_participants.append(participant)
                         if 'recipient' in swap and swap['recipient']:
-                            swap_participants.append(self.clean_address(swap['recipient']))
+                            participant = self.clean_address(swap['recipient'])
+                            if participant != clean_token_address:  # Filter out token address
+                                swap_participants.append(participant)
                         if 'to' in swap and swap['to']:
-                            swap_participants.append(self.clean_address(swap['to']))
+                            participant = self.clean_address(swap['to'])
+                            if participant != clean_token_address:  # Filter out token address
+                                swap_participants.append(participant)
                     
                     if swap_participants:
-                        initiators = ", ".join(list(set(swap_participants)))
+                        unique_participants = list(set(swap_participants))
+                        initiators = ", ".join(unique_participants)
+                        print(f"      🔄 DEBUG: SWAP - Found {len(unique_participants)} unique participants after filtering token address")
+                
+                # 🚨 CRITICAL ALERT: Check for multiple initiators
+                if initiators != "Unknown" and initiators:
+                    initiators_list = [addr.strip() for addr in initiators.split(",") if addr.strip()]
+                    if len(initiators_list) > 1:
+                        print(f"      🚨🚨🚨 CRITICAL ALERT: MULTIPLE INITIATORS DETECTED! 🚨🚨🚨")
+                        print(f"         Transaction Type: {transaction_type}")
+                        print(f"         Transaction Hash: {tx_hash}")
+                        print(f"         Number of Initiators: {len(initiators_list)}")
+                        print(f"         Initiators: {initiators}")
+                        print(f"         This could indicate COORDINATED MANIPULATION or WASH TRADING!")
+                        print(f"         ⚠️⚠️⚠️ REQUIRES IMMEDIATE INVESTIGATION ⚠️⚠️⚠️")
+                    else:
+                        print(f"      ✅ DEBUG: Single initiator detected: {initiators_list[0][:10]}...")
+                else:
+                    print(f"      ⚠️ DEBUG: No valid initiators found after filtering")
                 
                 # Log the transfers we're filtering out
                 for _, transfer in transfer_events.iterrows():
@@ -301,8 +343,115 @@ class WashTradingDetector:
                     
                     filtered_transactions.append(event_dict)
                 
+            elif has_mint and has_transfer:
+                # This transaction has both mints and transfers
+                # Filter out transfers that match mint amounts
+                
+                mint_events = group[group['event_type'] == 'Mint']
+                transfer_events = group[group['event_type'] == 'Transfer']
+                non_transfer_events = group[group['event_type'] != 'Transfer']
+                
+                print(f"      🏭 DEBUG: Processing mint transaction {tx_hash[:10]}...")
+                print(f"         Found {len(mint_events)} mint events and {len(transfer_events)} transfer events")
+                
+                # Get mint amounts for comparison
+                mint_amounts = set()
+                pair_addresses = set()
+                
+                for _, mint in mint_events.iterrows():
+                    # Get the pair address
+                    pair_addr = mint.get('pair_address', '')
+                    if pair_addr:
+                        clean_pair_addr = self.clean_address(pair_addr)
+                        if clean_pair_addr:
+                            pair_addresses.add(clean_pair_addr)
+                    
+                    # Get mint amounts (can be amount0 or amount1)
+                    amount0 = int(mint.get('amount0', 0)) if pd.notna(mint.get('amount0', 0)) else 0
+                    amount1 = int(mint.get('amount1', 0)) if pd.notna(mint.get('amount1', 0)) else 0
+                    
+                    if amount0 > 0:
+                        mint_amounts.add(amount0)
+                    if amount1 > 0:
+                        mint_amounts.add(amount1)
+                
+                print(f"         Mint amounts: {[f'{amt:,.0f}' for amt in mint_amounts]}")
+                print(f"         Pair addresses: {pair_addresses}")
+                
+                # Determine which transfers to filter out
+                transfers_to_keep = []
+                transfers_to_filter = []
+                
+                for _, transfer in transfer_events.iterrows():
+                    transfer_value = int(transfer['value'])
+                    
+                    # Check if this transfer amount matches any mint amount
+                    if transfer_value in mint_amounts:
+                        transfers_to_filter.append(transfer)
+                        print(f"      🚫 Filtering out transfer (matches mint amount): {transfer['from_address'][:10]}...→{transfer['to_address'][:10]}... amount: {transfer_value:,.0f}")
+                    else:
+                        transfers_to_keep.append(transfer)
+                        print(f"      ✅ Keeping transfer (doesn't match mint): {transfer['from_address'][:10]}...→{transfer['to_address'][:10]}... amount: {transfer_value:,.0f}")
+                
+                # Analyze remaining transfers for mint transaction analysis
+                mint_transaction_type = "MINT"
+                mint_initiators = "Unknown"
+                
+                # Clean addresses for filtering
+                clean_token_address = self.clean_address(token_address)
+                clean_uniswap_router = self.clean_address(self.UNISWAP_V2_ROUTER)
+                
+                # Find initiators from remaining transfers (from addresses)
+                initiator_candidates = []
+                for transfer in transfers_to_keep:
+                    clean_from = self.clean_address(transfer['from_address'])
+                    
+                    # Exclude token address, pair addresses, and Uniswap router
+                    if (clean_from and 
+                        clean_from != clean_token_address and 
+                        clean_from not in pair_addresses and 
+                        clean_from != clean_uniswap_router):
+                        initiator_candidates.append(clean_from)
+                
+                if initiator_candidates:
+                    unique_initiators = list(set(initiator_candidates))
+                    mint_initiators = ", ".join(unique_initiators)
+                    print(f"      🏭 MINT - Found {len(unique_initiators)} initiators: {mint_initiators[:50]}...")
+                else:
+                    print(f"      🏭 MINT - No valid initiators found after filtering")
+                
+                # Add mint events with analysis
+                for _, event in mint_events.iterrows():
+                    event_dict = event.to_dict()
+                    event_dict['transaction_type'] = mint_transaction_type
+                    event_dict['initiators'] = mint_initiators
+                    event_dict['transfer_count'] = len(transfers_to_keep)
+                    event_dict['filtered_transfer_count'] = len(transfers_to_filter)
+                    
+                    # Add transfer analysis
+                    remaining_transfer_summary = "; ".join([
+                        f"{self.clean_address(t['from_address'])[:8]}...→{self.clean_address(t['to_address'])[:8]}...({int(t['value']):,.0f})" 
+                        for t in transfers_to_keep[:3]
+                    ])
+                    if len(transfers_to_keep) > 3:
+                        remaining_transfer_summary += f"; +{len(transfers_to_keep) - 3} more"
+                    
+                    event_dict['related_transfers'] = remaining_transfer_summary
+                    filtered_transactions.append(event_dict)
+                
+                # Add other non-transfer events (burns, etc.)
+                for _, event in non_transfer_events.iterrows():
+                    if event['event_type'] != 'Mint':  # Don't duplicate mints
+                        filtered_transactions.append(event.to_dict())
+                
+                # Log that we're filtering out ALL transfers in mint transactions
+                for _, transfer in transfer_events.iterrows():
+                    transfer_from = transfer['from_address']
+                    transfer_to = transfer['to_address']
+                    print(f"      🚫 Filtering out transfer (part of mint tx): {transfer_from[:10]}...→{transfer_to[:10]}... amount: {transfer['value']:,.0f}")
+                
             else:
-                # No swap in this transaction, keep all events
+                # No swap or mint with transfers, keep all events
                 for _, event in group.iterrows():
                     filtered_transactions.append(event.to_dict())
         
@@ -322,10 +471,162 @@ class WashTradingDetector:
         print(f"         Original transactions: {original_count}")
         print(f"         Filtered transactions: {filtered_count}")
         print(f"         Removed transactions: {removed_count}")
-        print(f"         Removal strategy: ALL transfers in swap transactions")
+        print(f"         Removal strategy: ALL transfers in swap and mint transactions")
         print(f"         Enhanced with: transaction type, initiators, transfer analysis")
         
         return filtered_df
+    
+    def create_aggregated_timeline(self, filtered_timeline_df: pd.DataFrame) -> pd.DataFrame:
+        """Create an aggregated timeline that consolidates transactions with same tx hash, initiator, and direction."""
+        
+        print("   📊 Creating aggregated timeline (consolidating same tx/initiator/direction)...")
+        
+        if filtered_timeline_df.empty:
+            print("   ⚠️  DEBUG: Filtered timeline is empty, returning empty DataFrame")
+            return filtered_timeline_df.copy()
+        
+        print(f"   📊 DEBUG: Starting with {len(filtered_timeline_df)} transactions in filtered timeline")
+        
+        # Find events that have the additional analysis fields (swaps and mints)
+        analyzable_events = filtered_timeline_df[
+            (filtered_timeline_df['transaction_type'].notna()) &
+            (filtered_timeline_df['initiators'].notna())
+        ].copy()
+        
+        # Keep non-analyzable events as they are
+        non_analyzable_events = filtered_timeline_df[
+            (filtered_timeline_df['transaction_type'].isna()) |
+            (filtered_timeline_df['initiators'].isna())
+        ].copy()
+        
+        print(f"   📊 DEBUG: Found {len(analyzable_events)} analyzable events (swaps + mints) to aggregate")
+        print(f"   📊 DEBUG: Found {len(non_analyzable_events)} non-analyzable events to keep as-is")
+        
+        if analyzable_events.empty:
+            print("   ⚠️  No events with analysis data found for aggregation")
+            return filtered_timeline_df.copy()
+        
+        aggregated_events = []
+        
+        # Group by transaction_hash, initiators, and transaction_type
+        grouping_cols = ['transaction_hash', 'initiators', 'transaction_type']
+        
+        # Ensure all grouping columns exist
+        missing_cols = [col for col in grouping_cols if col not in analyzable_events.columns]
+        if missing_cols:
+            print(f"   ⚠️  Missing required columns for aggregation: {missing_cols}")
+            return filtered_timeline_df.copy()
+        
+        grouped = analyzable_events.groupby(grouping_cols)
+        
+        print(f"   📊 DEBUG: Created {len(grouped)} groups for aggregation")
+        
+        for group_key, group_df in grouped:
+            tx_hash, initiators, transaction_type = group_key
+            group_size = len(group_df)
+            
+            print(f"   🔍 DEBUG: Processing group - tx: {tx_hash[:10]}..., initiators: {initiators[:20]}..., type: {transaction_type}, size: {group_size}")
+            
+            if group_size == 1:
+                # Single transaction, keep as is
+                aggregated_events.append(group_df.iloc[0].to_dict())
+                print(f"      ✅ Single transaction - keeping as-is")
+            else:
+                # Multiple transactions to aggregate
+                print(f"      📊 Aggregating {group_size} {transaction_type} events")
+                
+                # Use the first row as template
+                aggregated_row = group_df.iloc[0].to_dict()
+                
+                # Sum the values
+                total_value = group_df['value'].sum()
+                
+                # Handle different types of counts based on transaction type
+                if transaction_type in ['BUY', 'SELL', 'SWAP', 'MIXED']:
+                    # For swap-related events
+                    total_transfer_count = group_df['transfer_count'].sum() if 'transfer_count' in group_df.columns else 0
+                    total_transfer_value = group_df['total_transfer_value'].sum() if 'total_transfer_value' in group_df.columns else 0
+                    
+                    aggregated_row['transfer_count'] = total_transfer_count
+                    aggregated_row['total_transfer_value'] = total_transfer_value
+                    
+                elif transaction_type == 'MINT':
+                    # For mint events
+                    total_transfer_count = group_df['transfer_count'].sum() if 'transfer_count' in group_df.columns else 0
+                    total_filtered_transfer_count = group_df['filtered_transfer_count'].sum() if 'filtered_transfer_count' in group_df.columns else 0
+                    
+                    aggregated_row['transfer_count'] = total_transfer_count
+                    aggregated_row['filtered_transfer_count'] = total_filtered_transfer_count
+                
+                # Combine related transfers
+                related_transfers_list = []
+                for _, row in group_df.iterrows():
+                    if 'related_transfers' in row and pd.notna(row['related_transfers']):
+                        related_transfers_list.append(str(row['related_transfers']))
+                
+                combined_related_transfers = "; ".join(related_transfers_list) if related_transfers_list else ""
+                
+                # Update aggregated values
+                aggregated_row['value'] = total_value
+                aggregated_row['related_transfers'] = combined_related_transfers
+                aggregated_row['aggregated_count'] = group_size  # Add new field to track aggregation
+                aggregated_row['aggregation_note'] = f"Aggregated from {group_size} {transaction_type.lower()} events"
+                
+                # Add aggregation details
+                original_values = group_df['value'].tolist()
+                aggregated_row['original_values'] = ", ".join([f"{v:,.0f}" for v in original_values])
+                
+                aggregated_events.append(aggregated_row)
+                
+                print(f"      ✅ Aggregated: {group_size} {transaction_type} events → 1 event")
+                print(f"         Original values: {[f'{v:,.0f}' for v in original_values]}")
+                print(f"         Aggregated value: {total_value:,.0f}")
+        
+        # Combine aggregated events with non-analyzable events
+        all_aggregated = []
+        
+        # Add aggregated events
+        all_aggregated.extend(aggregated_events)
+        
+        # Add non-analyzable events
+        for _, row in non_analyzable_events.iterrows():
+            row_dict = row.to_dict()
+            row_dict['aggregated_count'] = 1  # Mark as non-aggregated
+            row_dict['aggregation_note'] = "Not aggregated (no analysis data)"
+            all_aggregated.append(row_dict)
+        
+        # Create aggregated DataFrame
+        aggregated_df = pd.DataFrame(all_aggregated)
+        
+        if not aggregated_df.empty:
+            # Re-sort and re-index
+            aggregated_df = aggregated_df.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
+            aggregated_df['timeline_index'] = range(len(aggregated_df))
+        
+        original_count = len(filtered_timeline_df)
+        aggregated_count = len(aggregated_df)
+        reduction_count = original_count - aggregated_count
+        
+        print(f"   📊 DEBUG: === AGGREGATION SUMMARY ===")
+        print(f"      Original filtered transactions: {original_count}")
+        print(f"      Aggregated transactions: {aggregated_count}")
+        print(f"      Transactions consolidated: {reduction_count}")
+        print(f"      Reduction rate: {(reduction_count/original_count*100):.1f}%" if original_count > 0 else "0%")
+        print(f"      Analyzable events processed: {len(analyzable_events)}")
+        print(f"      Aggregated event groups: {len(grouped)}")
+        print(f"      Non-analyzable events kept: {len(non_analyzable_events)}")
+        
+        # Show sample of aggregated data
+        if not aggregated_df.empty:
+            aggregated_events = aggregated_df[aggregated_df['aggregated_count'] > 1]
+            if not aggregated_events.empty:
+                print(f"   🔍 DEBUG: Sample aggregated events:")
+                for _, row in aggregated_events.head(3).iterrows():
+                    print(f"      - tx: {row['transaction_hash'][:10]}..., type: {row['transaction_type']}, count: {row['aggregated_count']}, value: {row['value']:,.0f}")
+        
+        print(f"   ✅ DEBUG: Aggregation completed successfully")
+        
+        return aggregated_df
     
     def clean_address(self, address) -> str:
         """Clean and standardize address format."""
@@ -693,7 +994,7 @@ class WashTradingDetector:
     
     def analyze_wash_trading(self, transfer_df: pd.DataFrame, swap_v2_df: pd.DataFrame, 
                            swap_v3_df: pd.DataFrame, mint_df: pd.DataFrame, 
-                           burn_df: pd.DataFrame) -> Dict[str, Any]:
+                           burn_df: pd.DataFrame, token_address: str) -> Dict[str, Any]:
         """Main function to analyze all wash trading patterns."""
         
         print("   🕵️  Starting comprehensive wash trading analysis...")
@@ -702,7 +1003,10 @@ class WashTradingDetector:
         timeline_df = self.create_unified_timeline(transfer_df, swap_v2_df, swap_v3_df, mint_df, burn_df)
         
         # Create filtered timeline (removes transfers that are part of swaps)
-        filtered_timeline_df = self.create_filtered_timeline(timeline_df)
+        filtered_timeline_df = self.create_filtered_timeline(timeline_df, token_address)
+        
+        # Create aggregated timeline (consolidates transactions with same tx/initiator/direction)
+        aggregated_timeline_df = self.create_aggregated_timeline(filtered_timeline_df)
         
         # Store filtered timeline for use in coordinated trading detection
         self.filtered_timeline = filtered_timeline_df
@@ -751,6 +1055,7 @@ class WashTradingDetector:
             'summary': analysis_summary,
             'timeline': timeline_df,
             'filtered_timeline': filtered_timeline_df,
+            'aggregated_timeline': aggregated_timeline_df,
             'graph': self.transaction_graph
 }
 
@@ -1389,7 +1694,7 @@ class TokenAnalyticsExcel:
                 wash_detector = WashTradingDetector()
                 wash_analysis = wash_detector.analyze_wash_trading(
                     transfer_df, combined_swaps_v2, combined_swaps_v3, 
-                    combined_mints, combined_burns
+                    combined_mints, combined_burns, token_address
                 )
                 
                 # Export wash trading results to Excel
@@ -1477,6 +1782,60 @@ class TokenAnalyticsExcel:
                     else:
                         print(f"   ⚠️  Filtered timeline is empty - no transactions to export")
                     
+                    # Export aggregated timeline
+                    if 'aggregated_timeline' in wash_analysis and not wash_analysis['aggregated_timeline'].empty:
+                        # Create a comprehensive aggregated timeline with all relevant information
+                        aggregated_timeline_export = wash_analysis['aggregated_timeline'].copy()
+                        
+                        # Add human-readable value formatting
+                        aggregated_timeline_export['value_formatted'] = aggregated_timeline_export['value'].apply(lambda x: f"{x:,.2f}" if pd.notna(x) and x != 0 else "0")
+                        
+                        # Add short address labels for readability
+                        aggregated_timeline_export['from_short'] = aggregated_timeline_export['from_address'].apply(
+                            lambda x: f"{x[:8]}...{x[-4:]}" if x and len(str(x)) > 12 else str(x)
+                        )
+                        aggregated_timeline_export['to_short'] = aggregated_timeline_export['to_address'].apply(
+                            lambda x: f"{x[:8]}...{x[-4:]}" if x and len(str(x)) > 12 else str(x)
+                        )
+                        
+                        # Reorder columns for better readability - include ALL columns including new aggregation ones
+                        timeline_columns = ['timeline_index', 'block_number', 'event_type', 'from_short', 'to_short', 
+                                          'value_formatted', 'transaction_hash', 'transaction_type', 'initiators', 
+                                          'transfer_count', 'total_transfer_value', 'related_transfers',
+                                          'aggregated_count', 'aggregation_note', 'original_values',
+                                          'from_address', 'to_address', 'value', 'token_address', 'pair_address']
+                        
+                        # Only include columns that exist
+                        available_columns = [col for col in timeline_columns if col in aggregated_timeline_export.columns]
+                        
+                        # Also include any additional columns that might exist but weren't in our predefined list
+                        existing_columns = list(aggregated_timeline_export.columns)
+                        for col in existing_columns:
+                            if col not in available_columns:
+                                available_columns.append(col)
+                        
+                        aggregated_timeline_export_final = aggregated_timeline_export[available_columns]
+                        
+                        aggregated_timeline_export_final.to_excel(writer, sheet_name='Aggregated_Timeline', index=False)
+                        print(f"   ✅ Exported aggregated timeline with {len(aggregated_timeline_export_final)} transactions to 'Aggregated_Timeline' sheet")
+                        
+                        # Calculate aggregation statistics
+                        aggregated_events = aggregated_timeline_export_final[aggregated_timeline_export_final['aggregated_count'] > 1]
+                        original_filtered_count = len(wash_analysis['filtered_timeline']) if 'filtered_timeline' in wash_analysis else 0
+                        reduction_count = original_filtered_count - len(aggregated_timeline_export_final)
+                        
+                        print(f"      📊 Consolidated {reduction_count} transactions through aggregation")
+                        print(f"      🔗 Found {len(aggregated_events)} groups with multiple transactions")
+                        print(f"      📋 Columns included: {len(available_columns)} columns")
+                        print(f"      🆕 New aggregation columns: aggregated_count, aggregation_note, original_values")
+                        
+                        if not aggregated_events.empty:
+                            total_aggregated_transactions = aggregated_events['aggregated_count'].sum()
+                            print(f"      📈 Total original transactions represented in aggregated groups: {total_aggregated_transactions}")
+                            print(f"      📉 Compression ratio: {len(aggregated_events)}/{total_aggregated_transactions} = {(len(aggregated_events)/total_aggregated_transactions*100):.1f}%")
+                    else:
+                        print(f"   ⚠️  Aggregated timeline is empty - no transactions to export")
+                    
                     # Create wash trading summary
                     wash_summary_data = []
                     summary = wash_analysis['summary']
@@ -1493,7 +1852,9 @@ class TokenAnalyticsExcel:
                         {"Metric": "Total Address Connections", "Value": summary['graph_stats']['total_connections']},
                         {"Metric": "Original Transactions", "Value": summary['graph_stats']['original_transactions']},
                         {"Metric": "Filtered Transactions (used for analysis)", "Value": summary['graph_stats']['filtered_transactions']},
-                        {"Metric": "Removed Swap-related Transfers", "Value": summary['graph_stats']['original_transactions'] - summary['graph_stats']['filtered_transactions']}
+                        {"Metric": "Aggregated Transactions (consolidated)", "Value": len(wash_analysis['aggregated_timeline']) if 'aggregated_timeline' in wash_analysis else 0},
+                        {"Metric": "Removed Swap-related Transfers", "Value": summary['graph_stats']['original_transactions'] - summary['graph_stats']['filtered_transactions']},
+                        {"Metric": "Transactions Consolidated by Aggregation", "Value": summary['graph_stats']['filtered_transactions'] - (len(wash_analysis['aggregated_timeline']) if 'aggregated_timeline' in wash_analysis else 0)}
                     ])
                     
                     # Calculate risk assessment
@@ -1600,7 +1961,7 @@ class TokenAnalyticsExcel:
             #     print(f"   🔧 Full error trace:")
             #     traceback.print_exc()
             #     alchemy_balances_df = pd.DataFrame()
-            
+            #
             # # 7. Create summary sheet
             # summary_data = {
             #     "Metric": [
@@ -1845,7 +2206,7 @@ class TokenAnalyticsExcel:
         print(f"   📊 Total records processed: {len(balance_df)}")
         if not balance_df.empty:
             print(f"   📈 Records with ETH balance: {len(balance_df[balance_df['eth_balance_wei'].notna()])}")
-            print(f"   �� Records with token balance: {len(balance_df[balance_df['token_balance_raw'].notna()])}")
+            print(f"    Records with token balance: {len(balance_df[balance_df['token_balance_raw'].notna()])}")
             print(f"   📈 Records with positive token balance: {len(balance_df[balance_df['token_balance_raw'] > 0])}")
         
         # Return all data for debugging - we'll filter later if needed
