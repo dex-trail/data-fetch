@@ -1,0 +1,74 @@
+
+Bitquery
+
+
+
+
+
+
+
+token 
+    symbol
+    token name
+    network
+    token description
+    launch date
+    id on dex screener
+    transfers - list - appendable
+    current circ supply - snapshot
+    holders addresses - snapshot
+        {maker}
+
+
+token pair
+    dex
+    trades - list
+    liquidity mint / burn txs - list
+    current tokens amount in the pool - snapshot
+    current tokens amount outside the pool - snapshot
+        
+
+
+maker
+    address
+
+
+
+
+
+
+
+
+
+
+
+const content = {
+     public: {
+            '@context': 'http://schema.org',
+            '@id': 'https://en.wikipedia.org/wiki/New_York_City',
+            '@type': 'Token',
+            name: 'New York',
+            state: 'New York',
+            population: '8,336,817',
+            area: '468.9 sq mi',
+     },
+     private: {
+        '@context': 'http://schema.org',
+        '@id': 'https://en.wikipedia.org/wiki/New_York_City',
+        '@type': 'CityPrivateData',
+        crimeRate: 'Low',
+        averageIncome: '$63,998',
+        infrastructureScore: '8.5',
+        relatedCities: [
+            { '@id': 'urn:us-cities:info:los-angeles', name: 'Los Angeles' },
+            { '@id': 'urn:us-cities:info:chicago', name: 'Chicago' },
+        ],
+     },
+}
+
+
+
+
+
+
+
