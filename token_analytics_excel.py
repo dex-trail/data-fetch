@@ -4,11 +4,13 @@ import json
 import pandas as pd
 import os
 import aiohttp
+import networkx as nx
 from datetime import datetime
 from dotenv import load_dotenv
 from hypersync import BlockField, TransactionField, LogField, ClientConfig
-from typing import List, Dict, Any, Optional, Set
-from collections import defaultdict
+from typing import List, Dict, Any, Optional, Set, Tuple
+from collections import defaultdict, Counter
+import numpy as np
 
 # Load environment variables from .env file
 load_dotenv()
@@ -48,6 +50,528 @@ EVENT_SIGNATURES = {
         "signature": "Burn(address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)",
         "hash": "0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c"
     }
+}
+
+class WashTradingDetector:
+    """
+    Advanced wash trading detection system that analyzes trading patterns
+    to identify potential market manipulation and artificial volume.
+    """
+    
+    def __init__(self):
+        self.transaction_graph = nx.DiGraph()
+        self.unified_timeline = []
+        self.wash_trading_patterns = []
+        
+    def create_unified_timeline(self, transfer_df: pd.DataFrame, swap_v2_df: pd.DataFrame, 
+                              swap_v3_df: pd.DataFrame, mint_df: pd.DataFrame, 
+                              burn_df: pd.DataFrame) -> pd.DataFrame:
+        """Create a unified timeline of all transactions ordered by block number."""
+        
+        print("   🕐 Creating unified transaction timeline...")
+        timeline_data = []
+        
+        # Process Transfer events
+        if not transfer_df.empty:
+            for _, row in transfer_df.iterrows():
+                timeline_data.append({
+                    'block_number': row['block_number'],
+                    'transaction_hash': row['transaction_hash'],
+                    'event_type': 'Transfer',
+                    'from_address': self.clean_address(row['from_address']),
+                    'to_address': self.clean_address(row['to_address']),
+                    'value': float(row['value']) if pd.notna(row['value']) else 0,
+                    'token_address': row.get('token_address', ''),
+                    'pair_address': None,
+                    'raw_data': row.to_dict()
+                })
+        
+        # Process V2 Swap events
+        if not swap_v2_df.empty:
+            for _, row in swap_v2_df.iterrows():
+                timeline_data.append({
+                    'block_number': row['block_number'],
+                    'transaction_hash': row['transaction_hash'],
+                    'event_type': 'V2_Swap',
+                    'from_address': self.clean_address(row['sender']),
+                    'to_address': self.clean_address(row['to']),
+                    'value': max(float(row.get('amount0In', 0)), float(row.get('amount1In', 0)),
+                               float(row.get('amount0Out', 0)), float(row.get('amount1Out', 0))),
+                    'token_address': None,
+                    'pair_address': row.get('pair_address', ''),
+                    'raw_data': row.to_dict()
+                })
+        
+        # Process V3 Swap events
+        if not swap_v3_df.empty:
+            for _, row in swap_v3_df.iterrows():
+                timeline_data.append({
+                    'block_number': row['block_number'],
+                    'transaction_hash': row['transaction_hash'],
+                    'event_type': 'V3_Swap',
+                    'from_address': self.clean_address(row['sender']),
+                    'to_address': self.clean_address(row['recipient']),
+                    'value': max(abs(float(row.get('amount0', 0))), abs(float(row.get('amount1', 0)))),
+                    'token_address': None,
+                    'pair_address': row.get('pair_address', ''),
+                    'raw_data': row.to_dict()
+                })
+        
+        # Process Mint events
+        if not mint_df.empty:
+            for _, row in mint_df.iterrows():
+                from_addr = row.get('sender') or row.get('owner', '')
+                timeline_data.append({
+                    'block_number': row['block_number'],
+                    'transaction_hash': row['transaction_hash'],
+                    'event_type': 'Mint',
+                    'from_address': self.clean_address(from_addr),
+                    'to_address': row.get('pair_address', ''),
+                    'value': max(float(row.get('amount0', 0)), float(row.get('amount1', 0))),
+                    'token_address': None,
+                    'pair_address': row.get('pair_address', ''),
+                    'raw_data': row.to_dict()
+                })
+        
+        # Process Burn events
+        if not burn_df.empty:
+            for _, row in burn_df.iterrows():
+                to_addr = row.get('to') or row.get('owner', '')
+                timeline_data.append({
+                    'block_number': row['block_number'],
+                    'transaction_hash': row['transaction_hash'],
+                    'event_type': 'Burn',
+                    'from_address': row.get('pair_address', ''),
+                    'to_address': self.clean_address(to_addr),
+                    'value': max(float(row.get('amount0', 0)), float(row.get('amount1', 0))),
+                    'token_address': None,
+                    'pair_address': row.get('pair_address', ''),
+                    'raw_data': row.to_dict()
+                })
+        
+        # Create DataFrame and sort by block number
+        timeline_df = pd.DataFrame(timeline_data)
+        if not timeline_df.empty:
+            timeline_df = timeline_df.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
+            timeline_df['timeline_index'] = range(len(timeline_df))
+        
+        self.unified_timeline = timeline_df
+        print(f"      ✅ Created timeline with {len(timeline_df)} transactions")
+        return timeline_df
+    
+    def clean_address(self, address) -> str:
+        """Clean and standardize address format."""
+        if not address or address == "N/A":
+            return ""
+        
+        addr_str = str(address)
+        if addr_str.startswith('0x'):
+            if len(addr_str) == 66:
+                # Extract the last 40 characters (20 bytes) + 0x prefix = 42 chars
+                return '0x' + addr_str[-40:]
+            elif len(addr_str) == 42:
+                return addr_str.lower()
+        return ""
+    
+    def build_transaction_graph(self, timeline_df: pd.DataFrame) -> nx.DiGraph:
+        """Build a directed graph of address interactions."""
+        
+        print("   🕸️  Building transaction graph...")
+        
+        for _, row in timeline_df.iterrows():
+            from_addr = row['from_address']
+            to_addr = row['to_address']
+            
+            if from_addr and to_addr and from_addr != to_addr:
+                # Add edge with transaction data
+                if self.transaction_graph.has_edge(from_addr, to_addr):
+                    # Update existing edge
+                    edge_data = self.transaction_graph[from_addr][to_addr]
+                    edge_data['transaction_count'] += 1
+                    edge_data['total_value'] += row['value']
+                    edge_data['transactions'].append(row.to_dict())
+                else:
+                    # Create new edge
+                    self.transaction_graph.add_edge(from_addr, to_addr, 
+                                                  transaction_count=1,
+                                                  total_value=row['value'],
+                                                  transactions=[row.to_dict()])
+        
+        print(f"      ✅ Built graph with {self.transaction_graph.number_of_nodes()} nodes and {self.transaction_graph.number_of_edges()} edges")
+        return self.transaction_graph
+    
+    def detect_circular_trading(self, max_cycle_length: int = 5) -> List[Dict]:
+        """Detect circular trading patterns (A→B→C→A)."""
+        
+        print("   🔄 Detecting circular trading patterns...")
+        circular_patterns = []
+        
+        # Find cycles in the graph
+        try:
+            cycles = list(nx.simple_cycles(self.transaction_graph))
+            
+            for cycle in cycles:
+                if len(cycle) <= max_cycle_length:
+                    # Calculate cycle metrics
+                    total_value = 0
+                    transaction_count = 0
+                    min_block = float('inf')
+                    max_block = 0
+                    
+                    for i in range(len(cycle)):
+                        from_addr = cycle[i]
+                        to_addr = cycle[(i + 1) % len(cycle)]
+                        
+                        if self.transaction_graph.has_edge(from_addr, to_addr):
+                            edge_data = self.transaction_graph[from_addr][to_addr]
+                            total_value += edge_data['total_value']
+                            transaction_count += edge_data['transaction_count']
+                            
+                            # Find block range
+                            for tx in edge_data['transactions']:
+                                min_block = min(min_block, tx.get('block_number', 0))
+                                max_block = max(max_block, tx.get('block_number', 0))
+                    
+                    block_span = max_block - min_block if max_block > min_block else 0
+                    
+                    # Calculate suspicion score
+                    suspicion_score = self.calculate_circular_suspicion_score(
+                        len(cycle), transaction_count, total_value, block_span
+                    )
+                    
+                    circular_patterns.append({
+                        'pattern_type': 'Circular Trading',
+                        'addresses': cycle,
+                        'cycle_length': len(cycle),
+                        'transaction_count': transaction_count,
+                        'total_value': total_value,
+                        'block_span': block_span,
+                        'suspicion_score': suspicion_score,
+                        'description': f"Circular trading involving {len(cycle)} addresses: {' → '.join(cycle[:3])}{'...' if len(cycle) > 3 else ''}"
+                    })
+        
+        except Exception as e:
+            print(f"      ⚠️  Error detecting cycles: {e}")
+        
+        # Sort by suspicion score
+        circular_patterns.sort(key=lambda x: x['suspicion_score'], reverse=True)
+        print(f"      ✅ Found {len(circular_patterns)} circular trading patterns")
+        
+        return circular_patterns
+    
+    def detect_back_and_forth_trading(self, min_interactions: int = 5, time_window_blocks: int = 1000) -> List[Dict]:
+        """Detect back-and-forth trading between address pairs."""
+        
+        print("   ↔️  Detecting back-and-forth trading patterns...")
+        back_forth_patterns = []
+        
+        # Analyze each pair of connected addresses
+        for node1 in self.transaction_graph.nodes():
+            for node2 in self.transaction_graph.nodes():
+                if node1 != node2:
+                    # Check if both directions exist
+                    if (self.transaction_graph.has_edge(node1, node2) and 
+                        self.transaction_graph.has_edge(node2, node1)):
+                        
+                        edge1 = self.transaction_graph[node1][node2]
+                        edge2 = self.transaction_graph[node2][node1]
+                        
+                        total_interactions = edge1['transaction_count'] + edge2['transaction_count']
+                        
+                        if total_interactions >= min_interactions:
+                            # Analyze timing patterns
+                            all_transactions = edge1['transactions'] + edge2['transactions']
+                            all_transactions.sort(key=lambda x: x.get('block_number', 0))
+                            
+                            # Calculate time clustering
+                            time_clusters = self.find_time_clusters(all_transactions, time_window_blocks)
+                            
+                            # Calculate suspicion score
+                            suspicion_score = self.calculate_back_forth_suspicion_score(
+                                edge1['transaction_count'], edge2['transaction_count'],
+                                edge1['total_value'], edge2['total_value'],
+                                len(time_clusters)
+                            )
+                            
+                            back_forth_patterns.append({
+                                'pattern_type': 'Back-and-Forth Trading',
+                                'addresses': [node1, node2],
+                                'interactions_1_to_2': edge1['transaction_count'],
+                                'interactions_2_to_1': edge2['transaction_count'],
+                                'total_interactions': total_interactions,
+                                'value_1_to_2': edge1['total_value'],
+                                'value_2_to_1': edge2['total_value'],
+                                'time_clusters': len(time_clusters),
+                                'suspicion_score': suspicion_score,
+                                'description': f"Back-and-forth trading: {total_interactions} interactions between {node1[:8]}... and {node2[:8]}..."
+                            })
+        
+        # Sort by suspicion score and remove duplicates
+        back_forth_patterns.sort(key=lambda x: x['suspicion_score'], reverse=True)
+        print(f"      ✅ Found {len(back_forth_patterns)} back-and-forth trading patterns")
+        
+        return back_forth_patterns
+    
+    def detect_volume_pumping(self, min_volume_threshold: float = 1000000) -> List[Dict]:
+        """Detect artificial volume pumping patterns."""
+        
+        print("   📈 Detecting volume pumping patterns...")
+        volume_patterns = []
+        
+        # Analyze address pairs with high volume
+        for edge in self.transaction_graph.edges(data=True):
+            from_addr, to_addr, edge_data = edge
+            
+            if edge_data['total_value'] >= min_volume_threshold:
+                # Check for repetitive patterns
+                transactions = edge_data['transactions']
+                
+                # Analyze value patterns
+                values = [tx['value'] for tx in transactions]
+                value_repetition = len(values) - len(set(values))  # How many repeated values
+                
+                # Analyze timing patterns
+                blocks = [tx.get('block_number', 0) for tx in transactions]
+                block_intervals = [blocks[i+1] - blocks[i] for i in range(len(blocks)-1)]
+                avg_interval = np.mean(block_intervals) if block_intervals else 0
+                
+                # Calculate suspicion score
+                suspicion_score = self.calculate_volume_suspicion_score(
+                    edge_data['total_value'], edge_data['transaction_count'],
+                    value_repetition, avg_interval
+                )
+                
+                volume_patterns.append({
+                    'pattern_type': 'Volume Pumping',
+                    'from_address': from_addr,
+                    'to_address': to_addr,
+                    'total_value': edge_data['total_value'],
+                    'transaction_count': edge_data['transaction_count'],
+                    'value_repetition_count': value_repetition,
+                    'avg_block_interval': avg_interval,
+                    'suspicion_score': suspicion_score,
+                    'description': f"High volume ({edge_data['total_value']:,.0f}) in {edge_data['transaction_count']} transactions"
+                })
+        
+        # Sort by suspicion score
+        volume_patterns.sort(key=lambda x: x['suspicion_score'], reverse=True)
+        print(f"      ✅ Found {len(volume_patterns)} volume pumping patterns")
+        
+        return volume_patterns
+    
+    def detect_coordinated_trading(self, time_window_blocks: int = 100) -> List[Dict]:
+        """Detect coordinated trading activities."""
+        
+        print("   🤝 Detecting coordinated trading patterns...")
+        coordinated_patterns = []
+        
+        if self.unified_timeline.empty:
+            return coordinated_patterns
+        
+        # Group transactions by time windows
+        timeline_df = self.unified_timeline.copy()
+        timeline_df['time_group'] = timeline_df['block_number'] // time_window_blocks
+        
+        for time_group, group_df in timeline_df.groupby('time_group'):
+            if len(group_df) >= 5:  # Minimum transactions for coordination
+                
+                # Find addresses involved in multiple transactions
+                address_involvement = Counter()
+                for _, row in group_df.iterrows():
+                    if row['from_address']:
+                        address_involvement[row['from_address']] += 1
+                    if row['to_address']:
+                        address_involvement[row['to_address']] += 1
+                
+                # Find highly active addresses in this time window
+                highly_active = {addr: count for addr, count in address_involvement.items() 
+                               if count >= 3}
+                
+                if len(highly_active) >= 2:
+                    # Calculate coordination metrics
+                    total_transactions = len(group_df)
+                    involved_addresses = list(highly_active.keys())
+                    max_involvement = max(highly_active.values())
+                    
+                    # Calculate suspicion score
+                    suspicion_score = self.calculate_coordination_suspicion_score(
+                        len(involved_addresses), max_involvement, total_transactions
+                    )
+                    
+                    coordinated_patterns.append({
+                        'pattern_type': 'Coordinated Trading',
+                        'time_window_start': time_group * time_window_blocks,
+                        'time_window_end': (time_group + 1) * time_window_blocks,
+                        'involved_addresses': involved_addresses,
+                        'address_count': len(involved_addresses),
+                        'total_transactions': total_transactions,
+                        'max_address_involvement': max_involvement,
+                        'suspicion_score': suspicion_score,
+                        'description': f"Coordinated activity: {len(involved_addresses)} addresses in {total_transactions} transactions"
+                    })
+        
+        # Sort by suspicion score
+        coordinated_patterns.sort(key=lambda x: x['suspicion_score'], reverse=True)
+        print(f"      ✅ Found {len(coordinated_patterns)} coordinated trading patterns")
+        
+        return coordinated_patterns
+    
+    def find_time_clusters(self, transactions: List[Dict], window_size: int) -> List[List[Dict]]:
+        """Find clusters of transactions within time windows."""
+        if not transactions:
+            return []
+        
+        sorted_txs = sorted(transactions, key=lambda x: (x.get('block_number', 0), x.get('transaction_hash', '')))
+        clusters = []
+        current_cluster = [sorted_txs[0]]
+        
+        for tx in sorted_txs[1:]:
+            if tx.get('block_number', 0) - current_cluster[-1].get('block_number', 0) <= window_size:
+                current_cluster.append(tx)
+            else:
+                if len(current_cluster) > 1:
+                    clusters.append(current_cluster)
+                current_cluster = [tx]
+        
+        if len(current_cluster) > 1:
+            clusters.append(current_cluster)
+        
+        return clusters
+    
+    def calculate_circular_suspicion_score(self, cycle_length: int, tx_count: int, 
+                                         total_value: float, block_span: int) -> float:
+        """Calculate suspicion score for circular trading patterns."""
+        score = 0
+        
+        # Shorter cycles are more suspicious
+        score += (6 - cycle_length) * 20
+        
+        # More transactions in the cycle
+        score += min(tx_count * 5, 50)
+        
+        # Higher value
+        score += min(total_value / 1000000, 30)  # Normalize by 1M
+        
+        # Shorter time span is more suspicious
+        if block_span > 0:
+            score += max(0, 20 - block_span / 100)
+        
+        return min(score, 100)
+    
+    def calculate_back_forth_suspicion_score(self, count1: int, count2: int, 
+                                           value1: float, value2: float, clusters: int) -> float:
+        """Calculate suspicion score for back-and-forth trading."""
+        score = 0
+        
+        # Balance of interactions (more balanced = more suspicious)
+        balance_ratio = min(count1, count2) / max(count1, count2)
+        score += balance_ratio * 30
+        
+        # Total interaction count
+        total_interactions = count1 + count2
+        score += min(total_interactions * 2, 40)
+        
+        # Value balance
+        if value1 > 0 and value2 > 0:
+            value_balance = min(value1, value2) / max(value1, value2)
+            score += value_balance * 20
+        
+        # Time clustering
+        score += min(clusters * 5, 10)
+        
+        return min(score, 100)
+    
+    def calculate_volume_suspicion_score(self, total_value: float, tx_count: int, 
+                                       repetition: int, avg_interval: float) -> float:
+        """Calculate suspicion score for volume pumping."""
+        score = 0
+        
+        # High volume
+        score += min(total_value / 10000000, 40)  # Normalize by 10M
+        
+        # Many transactions
+        score += min(tx_count * 3, 30)
+        
+        # Value repetition
+        if tx_count > 0:
+            repetition_ratio = repetition / tx_count
+            score += repetition_ratio * 20
+        
+        # Regular intervals are suspicious
+        if avg_interval > 0 and avg_interval < 100:
+            score += 10
+        
+        return min(score, 100)
+    
+    def calculate_coordination_suspicion_score(self, address_count: int, max_involvement: int, 
+                                             total_txs: int) -> float:
+        """Calculate suspicion score for coordinated trading."""
+        score = 0
+        
+        # More addresses involved
+        score += min(address_count * 8, 40)
+        
+        # High involvement concentration
+        involvement_ratio = max_involvement / total_txs
+        score += involvement_ratio * 30
+        
+        # Total activity level
+        score += min(total_txs * 2, 30)
+        
+        return min(score, 100)
+    
+    def analyze_wash_trading(self, transfer_df: pd.DataFrame, swap_v2_df: pd.DataFrame, 
+                           swap_v3_df: pd.DataFrame, mint_df: pd.DataFrame, 
+                           burn_df: pd.DataFrame) -> Dict[str, Any]:
+        """Main function to analyze all wash trading patterns."""
+        
+        print("   🕵️  Starting comprehensive wash trading analysis...")
+        
+        # Create unified timeline
+        timeline_df = self.create_unified_timeline(transfer_df, swap_v2_df, swap_v3_df, mint_df, burn_df)
+        
+        # Build transaction graph
+        self.build_transaction_graph(timeline_df)
+        
+        # Detect different patterns
+        circular_patterns = self.detect_circular_trading()
+        back_forth_patterns = self.detect_back_and_forth_trading()
+        volume_patterns = self.detect_volume_pumping()
+        coordinated_patterns = self.detect_coordinated_trading()
+        
+        # Combine all patterns
+        all_patterns = (circular_patterns + back_forth_patterns + 
+                       volume_patterns + coordinated_patterns)
+        
+        # Sort by suspicion score
+        all_patterns.sort(key=lambda x: x['suspicion_score'], reverse=True)
+        
+        # Create summary
+        analysis_summary = {
+            'total_patterns_detected': len(all_patterns),
+            'circular_trading_patterns': len(circular_patterns),
+            'back_forth_patterns': len(back_forth_patterns),
+            'volume_pumping_patterns': len(volume_patterns),
+            'coordinated_trading_patterns': len(coordinated_patterns),
+            'high_suspicion_patterns': len([p for p in all_patterns if p['suspicion_score'] >= 70]),
+            'medium_suspicion_patterns': len([p for p in all_patterns if 40 <= p['suspicion_score'] < 70]),
+            'graph_stats': {
+                'total_addresses': self.transaction_graph.number_of_nodes(),
+                'total_connections': self.transaction_graph.number_of_edges(),
+                'total_transactions': len(timeline_df)
+            }
+        }
+        
+        print(f"   ✅ Wash trading analysis complete!")
+        print(f"      🔍 Total patterns detected: {len(all_patterns)}")
+        print(f"      🚨 High suspicion patterns: {analysis_summary['high_suspicion_patterns']}")
+        print(f"      ⚠️  Medium suspicion patterns: {analysis_summary['medium_suspicion_patterns']}")
+        
+        return {
+            'patterns': all_patterns,
+            'summary': analysis_summary,
+            'timeline': timeline_df,
+            'graph': self.transaction_graph
 }
 
 class TokenAnalyticsExcel:
@@ -238,7 +762,10 @@ class TokenAnalyticsExcel:
                     "token_address": transfer_results["token_address"]
                 })
         
-        return pd.DataFrame(transfers_data)
+        df = pd.DataFrame(transfers_data)
+        if not df.empty:
+            df = df.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
+        return df
     
     def process_swap_events(self, pair_results: Dict[str, Any], event_type: str) -> pd.DataFrame:
         """Convert swap events to pandas DataFrame."""
@@ -286,7 +813,10 @@ class TokenAnalyticsExcel:
             
             swaps_data.append(swap_data)
         
-        return pd.DataFrame(swaps_data)
+        df = pd.DataFrame(swaps_data)
+        if not df.empty:
+            df = df.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
+        return df
     
     def process_mint_burn_events(self, pair_results: Dict[str, Any], event_type: str) -> pd.DataFrame:
         """Convert mint/burn events to pandas DataFrame."""
@@ -355,7 +885,10 @@ class TokenAnalyticsExcel:
             
             events_data.append(event_data_row)
         
-        return pd.DataFrame(events_data)
+        df = pd.DataFrame(events_data)
+        if not df.empty:
+            df = df.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
+        return df
     
     def calculate_token_balances(self, token_address: str, transfer_df: pd.DataFrame, 
                                 swap_v2_df: pd.DataFrame, swap_v3_df: pd.DataFrame, 
@@ -626,21 +1159,25 @@ class TokenAnalyticsExcel:
             # 3. Combine and export all event types
             if all_swaps_v2:
                 combined_swaps_v2 = pd.concat(all_swaps_v2, ignore_index=True)
+                combined_swaps_v2 = combined_swaps_v2.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
                 combined_swaps_v2.to_excel(writer, sheet_name='Swaps_V2', index=False)
                 print(f"   ✅ Exported {len(combined_swaps_v2)} V2 Swap events to 'Swaps_V2' sheet")
             
             if all_swaps_v3:
                 combined_swaps_v3 = pd.concat(all_swaps_v3, ignore_index=True)
+                combined_swaps_v3 = combined_swaps_v3.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
                 combined_swaps_v3.to_excel(writer, sheet_name='Swaps_V3', index=False)
                 print(f"   ✅ Exported {len(combined_swaps_v3)} V3 Swap events to 'Swaps_V3' sheet")
             
             if all_mints:
                 combined_mints = pd.concat(all_mints, ignore_index=True)
+                combined_mints = combined_mints.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
                 combined_mints.to_excel(writer, sheet_name='Mints', index=False)
                 print(f"   ✅ Exported {len(combined_mints)} Mint events to 'Mints' sheet")
             
             if all_burns:
                 combined_burns = pd.concat(all_burns, ignore_index=True)
+                combined_burns = combined_burns.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
                 combined_burns.to_excel(writer, sheet_name='Burns', index=False)
                 print(f"   ✅ Exported {len(combined_burns)} Burn events to 'Burns' sheet")
             
@@ -666,7 +1203,101 @@ class TokenAnalyticsExcel:
                 print(f"   ❌ Error calculating token balances: {e}")
                 balance_df = pd.DataFrame()  # Create empty DataFrame for summary
             
-            # 5. Fetch current balances using Alchemy API
+            # 5. 🕵️ WASH TRADING ANALYSIS - NEW FEATURE!
+            try:
+                print(f"\n   🕵️  === WASH TRADING ANALYSIS ===")
+                wash_detector = WashTradingDetector()
+                wash_analysis = wash_detector.analyze_wash_trading(
+                    transfer_df, combined_swaps_v2, combined_swaps_v3, 
+                    combined_mints, combined_burns
+                )
+                
+                # Export wash trading results to Excel
+                if wash_analysis['patterns']:
+                    # All patterns
+                    patterns_df = pd.DataFrame(wash_analysis['patterns'])
+                    patterns_df.to_excel(writer, sheet_name='Wash_Trading_Patterns', index=False)
+                    print(f"   ✅ Exported {len(patterns_df)} wash trading patterns to 'Wash_Trading_Patterns' sheet")
+                    
+                    # High suspicion patterns only
+                    high_suspicion = [p for p in wash_analysis['patterns'] if p['suspicion_score'] >= 70]
+                    if high_suspicion:
+                        high_suspicion_df = pd.DataFrame(high_suspicion)
+                        high_suspicion_df.to_excel(writer, sheet_name='High_Risk_Patterns', index=False)
+                        print(f"   🚨 Exported {len(high_suspicion_df)} high-risk patterns to 'High_Risk_Patterns' sheet")
+                    
+                    # Export unified timeline
+                    if not wash_analysis['timeline'].empty:
+                        # Create a comprehensive timeline with all relevant information
+                        timeline_export = wash_analysis['timeline'].copy()
+                        
+                        # Add human-readable value formatting
+                        timeline_export['value_formatted'] = timeline_export['value'].apply(lambda x: f"{x:,.2f}" if pd.notna(x) and x != 0 else "0")
+                        
+                        # Add short address labels for readability
+                        timeline_export['from_short'] = timeline_export['from_address'].apply(
+                            lambda x: f"{x[:8]}...{x[-4:]}" if x and len(str(x)) > 12 else str(x)
+                        )
+                        timeline_export['to_short'] = timeline_export['to_address'].apply(
+                            lambda x: f"{x[:8]}...{x[-4:]}" if x and len(str(x)) > 12 else str(x)
+                        )
+                        
+                        # Reorder columns for better readability
+                        timeline_columns = ['timeline_index', 'block_number', 'event_type', 'from_short', 'to_short', 
+                                          'value_formatted', 'transaction_hash', 'from_address', 'to_address', 
+                                          'value', 'token_address', 'pair_address']
+                        
+                        # Only include columns that exist
+                        available_columns = [col for col in timeline_columns if col in timeline_export.columns]
+                        timeline_export_final = timeline_export[available_columns]
+                        
+                        timeline_export_final.to_excel(writer, sheet_name='Unified_Timeline', index=False)
+                        print(f"   ✅ Exported comprehensive unified timeline with {len(timeline_export_final)} transactions to 'Unified_Timeline' sheet")
+                    else:
+                        print(f"   ⚠️  Timeline is empty - no transactions to export")
+                    
+                    # Create wash trading summary
+                    wash_summary_data = []
+                    summary = wash_analysis['summary']
+                    
+                    wash_summary_data.extend([
+                        {"Metric": "Total Patterns Detected", "Value": summary['total_patterns_detected']},
+                        {"Metric": "High Suspicion Patterns (≥70)", "Value": summary['high_suspicion_patterns']},
+                        {"Metric": "Medium Suspicion Patterns (40-69)", "Value": summary['medium_suspicion_patterns']},
+                        {"Metric": "Circular Trading Patterns", "Value": summary['circular_trading_patterns']},
+                        {"Metric": "Back-and-Forth Patterns", "Value": summary['back_forth_patterns']},
+                        {"Metric": "Volume Pumping Patterns", "Value": summary['volume_pumping_patterns']},
+                        {"Metric": "Coordinated Trading Patterns", "Value": summary['coordinated_trading_patterns']},
+                        {"Metric": "Total Unique Addresses", "Value": summary['graph_stats']['total_addresses']},
+                        {"Metric": "Total Address Connections", "Value": summary['graph_stats']['total_connections']},
+                        {"Metric": "Total Transactions Analyzed", "Value": summary['graph_stats']['total_transactions']}
+                    ])
+                    
+                    # Calculate risk assessment
+                    risk_level = "LOW"
+                    if summary['high_suspicion_patterns'] >= 5:
+                        risk_level = "HIGH"
+                    elif summary['high_suspicion_patterns'] >= 2 or summary['medium_suspicion_patterns'] >= 10:
+                        risk_level = "MEDIUM"
+                    
+                    wash_summary_data.append({"Metric": "Overall Wash Trading Risk", "Value": risk_level})
+                    
+                    wash_summary_df = pd.DataFrame(wash_summary_data)
+                    wash_summary_df.to_excel(writer, sheet_name='Wash_Trading_Summary', index=False)
+                    print(f"   ✅ Created wash trading summary - Risk Level: {risk_level}")
+                    
+                else:
+                    print(f"   ✅ No suspicious wash trading patterns detected")
+                    # Create empty summary
+                    empty_summary = pd.DataFrame([{"Metric": "Wash Trading Analysis", "Value": "No suspicious patterns detected"}])
+                    empty_summary.to_excel(writer, sheet_name='Wash_Trading_Summary', index=False)
+                
+            except Exception as e:
+                print(f"   ❌ Error in wash trading analysis: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # 6. Fetch current balances using Alchemy API
             try:
                 print(f"   🔍 Checking Alchemy API configuration...")
                 print(f"      API Key available: {'Yes' if self.alchemy_api_key else 'No'}")
@@ -747,7 +1378,7 @@ class TokenAnalyticsExcel:
                 traceback.print_exc()
                 alchemy_balances_df = pd.DataFrame()
             
-            # 6. Create summary sheet
+            # 7. Create summary sheet
             summary_data = {
                 "Metric": [
                     "Token Address", 
@@ -759,7 +1390,10 @@ class TokenAnalyticsExcel:
                     "Addresses with Balances (calculated)",
                     "Total Supply (from transfers)",
                     "Unique Addresses (all events)",
-                    "Alchemy Balances Fetched"
+                    "Alchemy Balances Fetched",
+                    "🕵️ Wash Trading Risk Level",
+                    "🚨 High Risk Patterns",
+                    "⚠️ Medium Risk Patterns"
                 ],
                 "Value": [
                     token_address,
@@ -771,7 +1405,10 @@ class TokenAnalyticsExcel:
                     len(balance_df) if not balance_df.empty else 0,
                     balance_df['balance'].sum() if not balance_df.empty else 0,
                     len(unique_addresses) if 'unique_addresses' in locals() else 0,
-                    len(alchemy_balances_df) if 'alchemy_balances_df' in locals() and not alchemy_balances_df.empty else 0
+                    len(alchemy_balances_df) if 'alchemy_balances_df' in locals() and not alchemy_balances_df.empty else 0,
+                    locals().get('risk_level', 'N/A'),
+                    wash_analysis['summary']['high_suspicion_patterns'] if 'wash_analysis' in locals() else 0,
+                    wash_analysis['summary']['medium_suspicion_patterns'] if 'wash_analysis' in locals() else 0
                 ]
             }
             
@@ -985,7 +1622,7 @@ class TokenAnalyticsExcel:
         print(f"   📊 Total records processed: {len(balance_df)}")
         if not balance_df.empty:
             print(f"   📈 Records with ETH balance: {len(balance_df[balance_df['eth_balance_wei'].notna()])}")
-            print(f"   📈 Records with token balance: {len(balance_df[balance_df['token_balance_raw'].notna()])}")
+            print(f"   �� Records with token balance: {len(balance_df[balance_df['token_balance_raw'].notna()])}")
             print(f"   📈 Records with positive token balance: {len(balance_df[balance_df['token_balance_raw'] > 0])}")
         
         # Return all data for debugging - we'll filter later if needed
@@ -1085,7 +1722,7 @@ async def main():
     
     # Analyze each token and export to Excel
     processed_files = []
-    max_tokens = 5  # Process first 5 tokens - adjust as needed
+    max_tokens = 1  # Process first 5 tokens - adjust as needed
     
     for i, token_data in enumerate(tokens_data[:max_tokens]):
         try:
