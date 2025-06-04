@@ -11,6 +11,7 @@ from hypersync import BlockField, TransactionField, LogField, ClientConfig
 from typing import List, Dict, Any, Optional, Set, Tuple
 from collections import defaultdict, Counter
 import numpy as np
+import argparse
 
 # Load environment variables from .env file
 load_dotenv()
@@ -2298,6 +2299,30 @@ async def test_alchemy_configuration():
     print("🏁 Test completed!")
 
 async def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Analyze tokens from new_tokens_data.json and export to Excel",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Analyze all tokens from the JSON file
+  python3 token_analytics_excel.py
+  
+  # Analyze specific token addresses
+  python3 token_analytics_excel.py --addresses 0x1234...abcd 0x5678...efgh
+  
+  # Analyze specific token addresses (case insensitive)
+  python3 token_analytics_excel.py -a 0x1234...ABCD 0x5678...efgh
+        """
+    )
+    
+    parser.add_argument("--addresses", "-a", nargs="*", type=str,
+                        help="Specific token addresses to analyze (case insensitive). "
+                             "If not specified, all tokens from the JSON file will be analyzed. "
+                             "Example: --addresses 0x1234...abcd 0x5678...efgh")
+    
+    args = parser.parse_args()
+    
     # Initialize analyzer with optional Alchemy API key
     # You can pass the API key directly or set ALCHEMY_API_KEY environment variable
     alchemy_api_key = os.getenv('ALCHEMY_API_KEY')  # or replace with your actual key
@@ -2319,9 +2344,41 @@ async def main():
         print(f"❌ Error loading token data: {e}")
         return
     
+    # Filter tokens based on specified addresses
+    if args.addresses:
+        # Normalize specified addresses to lowercase for comparison
+        specified_addresses = {addr.lower() for addr in args.addresses}
+        print(f"🎯 Filtering for specific addresses: {', '.join(args.addresses)}")
+        
+        # Filter tokens that match the specified addresses
+        filtered_tokens = []
+        for token_entry in tokens_data:
+            token_data = token_entry.get('token_data', {})
+            token_address = token_data.get('tokenAddress', '').lower()
+            
+            if token_address in specified_addresses:
+                filtered_tokens.append(token_entry)
+        
+        if not filtered_tokens:
+            print(f"❌ No tokens found matching the specified addresses")
+            print(f"   Available token addresses in the file:")
+            for token_entry in tokens_data[:10]:  # Show first 10 for reference
+                token_data = token_entry.get('token_data', {})
+                token_address = token_data.get('tokenAddress', 'Unknown')
+                chain_id = token_data.get('chainId', 'Unknown')
+                print(f"   - {chain_id}:{token_address}")
+            if len(tokens_data) > 10:
+                print(f"   ... and {len(tokens_data) - 10} more")
+            return
+        
+        tokens_data = filtered_tokens
+        print(f"✅ Found {len(tokens_data)} matching token(s) to analyze")
+    else:
+        print(f"📝 No specific addresses specified - will analyze all {len(tokens_data)} tokens")
+    
     # Analyze each token and export to Excel
     processed_files = []
-    max_tokens = 1  # Process first 5 tokens - adjust as needed
+    max_tokens = len(tokens_data)  # Process all filtered tokens
     
     for i, token_data in enumerate(tokens_data[:max_tokens]):
         try:

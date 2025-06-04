@@ -41,6 +41,8 @@ def analyze_rugpuller_cluster(data_string: str, token_address_to_exclude: str, p
             source_addresses.add(recipient)
             address_attributes[recipient]['is_source'] = True
             if recipient not in G: G.add_node(recipient, type='source')
+    print("Source addresses:")
+    print(source_addresses)
 
     # Source from Mint events
     mint_events = df[df['event_type'] == 'Mint']
@@ -51,12 +53,6 @@ def analyze_rugpuller_cluster(data_string: str, token_address_to_exclude: str, p
             address_attributes[minter]['is_source'] = True
             if minter not in G: G.add_node(minter, type='source')
             
-            # If mint logs a recipient different from initiator (and not excluded)
-            mint_recipient = row['to_address']
-            if mint_recipient and mint_recipient != 'nan' and mint_recipient not in excluded_addresses and mint_recipient != minter:
-                if minter not in G: G.add_node(minter) # Ensure minter node exists
-                if mint_recipient not in G: G.add_node(mint_recipient)
-                G.add_edge(minter, mint_recipient, weight=5, type='mint_funding', block=row['block_number'])
 
 
     v2_swaps_df = df[df['event_type'] == 'V2_Swap']

@@ -1,0 +1,61 @@
+Description of the On-Chain Rug Puller Cluster Identification Tool
+
+Overall Goal:
+The primary goal of this Python tool is to analyze a given dataset of on-chain transactions and identify a single, primary cluster of addresses that are likely controlled by the same entity—the "owner" or "rug puller"—and are involved in generating manipulative trading activity related to a specific token. The tool aims to uncover the core operational addresses used by the suspected rug puller.
+
+Core Approach: Graph-Based Analytics & Unsupervised Community Detection
+The tool employs a graph-based approach, which can be considered a form of "Machine Learning without training" as it discovers inherent structures and relationships within the data algorithmically.
+
+Graph Representation: Transaction activities are modeled as a graph where blockchain addresses are nodes, and significant interactions or relationships between them form edges.
+Community Detection: Unsupervised community detection algorithms (specifically, the Louvain algorithm) are used to partition the graph into clusters (communities). These algorithms identify groups of nodes that are more densely interconnected with each other than with the rest of the network.
+
+Input:
+
+Transaction Data: A list of on-chain events (e.g., Transfers, Swaps, Mints) with details like block number, event type, involved addresses (from_address, to_address, initiators), and values.
+Excluded Addresses: A specific token_address and a pair_address (e.g., Uniswap pair) are provided. These addresses are crucial for context (e.g., the pair address is where swaps occur) but are excluded from being members of the final identified owner/rug-puller cluster.
+Methodology Breakdown:
+
+Data Preprocessing:
+
+The input transaction data is parsed and cleaned. Addresses are normalized (e.g., to lowercase), and transaction values are converted to numeric types.
+The user-provided token_address_to_exclude and pair_address_to_exclude are stored to ensure they are not included as members in the final output cluster.
+Graph Construction (networkx library):
+
+An undirected graph is built.
+Nodes: Unique blockchain addresses involved in the transactions (as initiators of swaps/mints, or from_address/to_address in transfers) become nodes in the graph, provided they are not in the global exclusion list.
+Node Attributes: Nodes are tagged with attributes, such as is_source (if it's an initial minter/recipient of the token) or is_swapper.
+Edges (Links with Weights): Edges are added between nodes to represent strong relationships, with weights indicating the strength or significance of the link:
+Source Address Identification: Addresses that initially minted tokens or received them from the null address (0x000...) are identified as "Source Addresses." These are considered the likely starting point of the owner's funds.
+Source Funding Links (High Weight): If a "Source Address" transfers tokens to another address (not excluded), a weighted edge is created, linking the source to the funded address. This is a strong indicator of common control or delegation.
+Coordinated Swaps (Very High Weight): This is a critical heuristic. If multiple distinct initiators (not excluded) execute the exact same swap action (same transaction_type like BUY/SELL, and identical value_formatted) within the same block_number, it strongly suggests these initiators are controlled by a single entity. High-weight edges are created between all pairs of such initiators.
+(Optional/Implicit: Direct peer-to-peer transfers between active swappers can also form links, strengthening connections within trading groups).
+
+Community Detection (python-louvain library):
+
+The Louvain algorithm is applied to the constructed graph. This algorithm partitions the graph's nodes into communities by optimizing for "modularity" – a measure of how densely connected nodes are within a community compared to connections with nodes outside it.
+This step effectively groups addresses that have strong or frequent interactions as defined by the edge creation logic.
+Identifying the Owner's Operational Cluster (Target Cluster Selection):
+
+The Louvain algorithm may identify multiple communities. The tool then focuses on finding the single community most representative of the rug puller's core operations.
+Prioritizing Source-Linked Communities: Communities are first filtered to identify those that are "source-related." A community is considered source-related if:
+It directly contains one or more of the identified "Source Addresses."
+It contains addresses that were directly funded by a "Source Address" (even if that Source Address itself was placed in a different, possibly smaller, Louvain community due to graph structure).
+Scoring Candidate Communities: These source-related communities are then scored based on indicators of manipulative trading activity:
+Internal Coordination: The presence and strength of "Coordinated Swap" links among members of the same community.
+Trading Volume & Pattern: The total number of BUY and SELL swap events initiated by the cluster's members. A pattern of coordinated BUYs followed by SELLs by the cluster members is a key indicator.
+Link to Source: The score is boosted if the cluster contains a Source Address or is directly funded by one.
+Selecting the Primary Cluster: The source-related community with the highest "trading activity and coordination" score is selected as the primary candidate for the "Owner's Operational Cluster."
+
+Ensuring Source Inclusion & Final Output:
+
+The final list of addresses reported for the identified cluster is composed of the members of the selected "trading apparatus" community.
+Crucially, if this selected trading community was primarily linked to a "Source Address" that funded it (but was placed in a separate Louvain community), that funding "Source Address(es)" is explicitly added to the final list of addresses for the owner's cluster. This ensures the owner/minter is represented.
+The tool outputs:
+A list of addresses in this single, consolidated owner's operational cluster.
+A confidence_level ("High", "Medium", "Low") based on the strength of the identified links and trading patterns.
+reasoning: A textual summary explaining why these addresses were grouped and flagged, referencing the heuristics met (e.g., "Cluster includes Source Address Y, funded addresses A and B. Addresses A, B, C performed N coordinated swaps in block X, followed by coordinated sells...").
+
+Key Heuristics & Assumptions:
+
+The primary assumption is that highly synchronized actions (especially identical swaps in the same block by different addresses) or direct funding from a central token source point to a single controlling entity or tightly knit group.
+The "rug puller" is assumed to be closely tied to the initial token source/minting process and will use a set of addresses to generate trading volume and manipulate market conditions.
