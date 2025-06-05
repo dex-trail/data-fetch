@@ -338,8 +338,43 @@ def main():
     try:
         results = analyze_token_data()
         
-        # Output JSON results
-        print(json.dumps(results, indent=2, default=str))
+        # Create shortened version with only key fields
+        results_short = {}
+        
+        # Extract from cluster_analysis
+        if 'cluster_analysis' in results:
+            cluster_data = results['cluster_analysis']
+            if 'confidence_level' in cluster_data:
+                results_short['confidence_level'] = cluster_data['confidence_level']
+            if 'reasoning' in cluster_data:
+                results_short['reasoning'] = cluster_data['reasoning']
+            if 'total_addresses_in_cluster' in cluster_data:
+                results_short['total_addresses_in_cluster'] = cluster_data['total_addresses_in_cluster']
+        
+        # Extract from comparative_analysis
+        if 'comparative_analysis' in results:
+            comparative_data = results['comparative_analysis']
+            if 'pool_vs_total_supply_ratio_percent' in comparative_data:
+                results_short['pool_vs_total_supply_ratio_percent'] = comparative_data['pool_vs_total_supply_ratio_percent']
+        
+        # Extract from rugpull_analysis
+        if 'rugpull_analysis' in results and isinstance(results['rugpull_analysis'], dict):
+            rugpull_data = results['rugpull_analysis']
+            if 'rugpull_risk_assessment' in rugpull_data:
+                risk_assessment = rugpull_data['rugpull_risk_assessment']
+                results_short['rugpull_analysis'] = {}
+                if 'overall_risk_level' in risk_assessment:
+                    results_short['rugpull_analysis']['overall_risk_level'] = risk_assessment['overall_risk_level']
+                if 'summary_of_concerns' in risk_assessment:
+                    results_short['rugpull_analysis']['summary_of_concerns'] = risk_assessment['summary_of_concerns']
+        
+        # Output both versions
+        output = {
+            'results': results,
+            'results_short': results_short
+        }
+        
+        print(json.dumps(output, indent=2, default=str))
         
         # Return 0 for success, 1 if there were errors
         return 1 if results.get('errors') else 0
