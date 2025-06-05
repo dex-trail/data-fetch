@@ -3,6 +3,7 @@
 Script to analyze token balances for clustered addresses and identify pool balance
 """
 
+import argparse
 import json
 import sys
 from decimal import Decimal, getcontext
@@ -134,12 +135,9 @@ def get_pool_balance(pool_address: str, balances_data: Dict) -> Dict:
         print(f"Error getting pool balance: {e}")
         return {'error': str(e)}
 
-def analyze_token_data() -> Dict:
+def analyze_token_data(clusters_file: str, balances_file: str, timeline_file: str) -> Dict:
     """Main analysis function that returns JSON results"""
-    # File paths
-    clusters_file = 'output/address_clusters.json'
-    balances_file = 'output/token_analysis_alchemy_balances.json'
-    timeline_file = 'output/aggregated_timeline.json'
+    # File paths are now parameters
     
     results = {
         'timestamp': None,
@@ -336,7 +334,13 @@ def analyze_token_data() -> Dict:
 def main():
     """Main function"""
     try:
-        results = analyze_token_data()
+        parser = argparse.ArgumentParser(description="Analyze token balances for clustered addresses and identify pool balance")
+        parser.add_argument("clusters_file", help="Path to the clusters JSON file")
+        parser.add_argument("balances_file", help="Path to the token balances JSON file")
+        parser.add_argument("timeline_file", help="Path to the aggregated timeline JSON file")
+        args = parser.parse_args()
+        
+        results = analyze_token_data(args.clusters_file, args.balances_file, args.timeline_file)
         
         # Create shortened version with only key fields
         results_short = {}
