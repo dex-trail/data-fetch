@@ -1,0 +1,88 @@
+{
+  "ethereum:0x05a89897a9d7f8a8c1f321e61e97ce239500fa70": {
+    "chainId": "ethereum",
+    "tokenAddress": "0x05a89897a9d7f8a8c1f321e61e97ce239500fa70",
+    "pairs_data": [
+      {
+        "chainId": "ethereum",
+        "dexId": "uniswap",
+        "url": "https://dexscreener.com/ethereum/0x2c39cd91b96e45ef2e68d73f9a821dfd8659461b",
+        "pairAddress": "0x2c39CD91b96E45EF2E68D73F9A821dFd8659461B",
+        "labels": [
+          "v2"
+        ],
+        "baseToken": {
+          "address": "0x05a89897A9d7F8A8C1f321e61e97ce239500fa70",
+          "name": "Hawk Tuah",
+          "symbol": "HAWK"
+        },
+        "quoteToken": {
+          "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+          "name": "Wrapped Ether",
+          "symbol": "WETH"
+        },
+        "priceNative": "0.0000000001959",
+        "priceUsd": "0.0000005168",
+        "txns": {
+          "m5": {
+            "buys": 0,
+            "sells": 0
+          },
+          "h1": {
+            "buys": 0,
+            "sells": 0
+          },
+          "h6": {
+            "buys": 0,
+            "sells": 0
+          },
+          "h24": {
+            "buys": 0,
+            "sells": 1
+          }
+        },
+        "volume": {
+          "h24": 20.07,
+          "h6": 0,
+          "h1": 0,
+          "m5": 0
+        },
+        "priceChange": {},
+        "liquidity": {
+          "usd": 29492.85,
+          "base": 28529936644,
+          "quote": 5.5918
+        },
+        "fdv": 5168754,
+        "marketCap": 5168754,
+        "pairCreatedAt": 1733220083000,
+        "info": {
+          "imageUrl": "https://dd.dexscreener.com/ds-data/tokens/ethereum/0x05a89897a9d7f8a8c1f321e61e97ce239500fa70.png?key=68f1b2",
+          "header": "https://dd.dexscreener.com/ds-data/tokens/ethereum/0x05a89897a9d7f8a8c1f321e61e97ce239500fa70/header.png?key=68f1b2",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0x05a89897a9d7f8a8c1f321e61e97ce239500fa70?timestamp=1749096300000",
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://overhere.tech/"
+            }
+          ],
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/OverHere_Eth"
+            },
+            {
+              "type": "telegram",
+              "url": "https://t.me/OverHereCommunityEth"
+            }
+          ]
+        }
+      }
+    ],
+    "pair_count": 1,
+    "fetched_at": "2025-06-05T07:04:31.105829",
+    "symbol": "HAWK",
+    "name": "Hawk Tuah",
+    "total_liquidity_usd": 29492.85
+  }
+}
