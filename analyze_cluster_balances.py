@@ -220,6 +220,8 @@ def analyze_token_data() -> Dict:
                 'pool_balance_raw': pool_balance,
                 'total_supply_raw': total_supply
             }
+
+    results = results['comparative_analysis']
     
     return results
 
