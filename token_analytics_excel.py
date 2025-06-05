@@ -1562,14 +1562,27 @@ class TokenAnalyticsExcel:
         
         return balance_df
 
-    async def analyze_token_to_excel(self, token_data: Dict[str, Any], from_block: int = 0) -> str:
+    async def analyze_token_to_excel(self, token_data: Dict[str, Any], from_block: int = 0, to_block: Optional[int] = None) -> str:
         """Analyze a single token and export all data to Excel file."""
         token_address = token_data["token_data"]["tokenAddress"]
         
         print(f"\n🎯 Analyzing token: {token_address}")
+        if to_block is not None:
+            print(f"   📊 Block range: {from_block} to {to_block}")
+        else:
+            print(f"   📊 Block range: {from_block} to latest")
         
         # Create filename based on token address
-        filename = f"token_analysis_{token_address}.xlsx"
+        filename_base = f"token_analysis_{token_address}"
+        
+        # Add block range to filename if custom range is specified
+        if from_block != 0 or to_block is not None:
+            if to_block is not None:
+                filename_base += f"_blocks_{from_block}_to_{to_block}"
+            else:
+                filename_base += f"_from_block_{from_block}"
+        
+        filename = f"{filename_base}.xlsx"
         filepath = os.path.join(self.output_dir, filename)
         
         # Initialize variables to store dataframes
@@ -1585,7 +1598,7 @@ class TokenAnalyticsExcel:
             # 1. Fetch and process Transfer events
             try:
                 print(f"   📊 Fetching Transfer events...")
-                transfer_results = await self.fetch_transfer_events(token_address, from_block)
+                transfer_results = await self.fetch_transfer_events(token_address, from_block, to_block)
                 transfer_df = self.process_transfer_events(transfer_results)
                 
                 if not transfer_df.empty:
@@ -1611,7 +1624,7 @@ class TokenAnalyticsExcel:
                 
                 try:
                     print(f"   📊 Fetching events for {pair_version} pair {pair_address}...")
-                    pair_events = await self.fetch_pair_events(pair_address, pair_version, from_block)
+                    pair_events = await self.fetch_pair_events(pair_address, pair_version, from_block, to_block)
                     
                     if "error" in pair_events:
                         print(f"   ⚠️  Skipping pair {pair_address}: {pair_events['error']}")
@@ -2301,7 +2314,7 @@ async def test_alchemy_configuration():
 async def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description="Analyze tokens from new_tokens_data.json and export to Excel",
+        description="Analyze tokens from new_tokens_data.json and export to Excel with support for custom block ranges",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -2311,8 +2324,14 @@ Examples:
   # Analyze specific token addresses
   python3 token_analytics_excel.py --addresses 0x1234...abcd 0x5678...efgh
   
-  # Analyze specific token addresses (case insensitive)
-  python3 token_analytics_excel.py -a 0x1234...ABCD 0x5678...efgh
+  # Analyze with custom block range (from block 18000000 to 18500000)
+  python3 token_analytics_excel.py --from-block 18000000 --to-block 18500000
+  
+  # Analyze specific token up to a certain block
+  python3 token_analytics_excel.py -a 0x1234...abcd --to-block 19000000
+  
+  # Analyze from a specific starting block to latest
+  python3 token_analytics_excel.py --from-block 18500000
         """
     )
     
@@ -2320,6 +2339,15 @@ Examples:
                         help="Specific token addresses to analyze (case insensitive). "
                              "If not specified, all tokens from the JSON file will be analyzed. "
                              "Example: --addresses 0x1234...abcd 0x5678...efgh")
+    
+    parser.add_argument("--from-block", type=int, default=0,
+                        help="Starting block number for analysis. Only events from this block onwards will be included. "
+                             "Use this to focus on recent activity or skip early token history. (default: 0)")
+    
+    parser.add_argument("--to-block", type=int, default=None,
+                        help="Ending block number for analysis. Only events up to this block will be included. "
+                             "Use this to analyze historical data or limit the scope of analysis. "
+                             "If not specified, will analyze up to the latest available block. (default: latest block)")
     
     args = parser.parse_args()
     
@@ -2335,6 +2363,12 @@ Examples:
         print(f"⚠️  No Alchemy API key found - balance fetching will be skipped")
         print(f"   💡 To enable balance fetching, set ALCHEMY_API_KEY environment variable")
         print(f"   💡 Or pass alchemy_api_key parameter to TokenAnalyticsExcel constructor")
+    
+    # Show block range information
+    if args.to_block is not None:
+        print(f"📊 Block range: {args.from_block} to {args.to_block}")
+    else:
+        print(f"📊 Block range: {args.from_block} to latest")
     
     # Load token data
     try:
@@ -2385,7 +2419,7 @@ Examples:
             print(f"\n{'='*60}")
             print(f"Processing token {i+1}/{min(max_tokens, len(tokens_data))}")
             
-            filepath = await analyzer.analyze_token_to_excel(token_data, from_block=0)
+            filepath = await analyzer.analyze_token_to_excel(token_data, from_block=args.from_block, to_block=args.to_block)
             processed_files.append(filepath)
             
         except Exception as e:
