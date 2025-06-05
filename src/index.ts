@@ -13,6 +13,10 @@ import { exec } from 'node:child_process';
 import { CustomDkgClient } from './custom-dkg-client.mjs';
 import { KCMulti } from './kcmulti.mjs';
 import { ethers } from 'ethers';
+import 'dotenv/config.js';
+// @ts-ignore
+import { kcTools } from 'assertion-tools';
+import { ERC20 } from './erc20abi';
 
 interface ExecResult {
   stdout: Buffer<ArrayBufferLike>;
@@ -21,6 +25,34 @@ interface ExecResult {
 
 const scriptsPath = path.join(__dirname, '..', 'scripts');
 const pythonPath = path.join(scriptsPath, 'venv', 'bin', 'python');
+
+const currentBigTask = {
+  busy: false,
+  promise: Promise.resolve() as Promise<void>,
+};
+
+function enqueueBigTask(task: Promise<void>) {
+  if (!currentBigTask.busy) {
+    currentBigTask.promise = task.then(() => {
+      currentBigTask.busy = false;
+    });
+    currentBigTask.busy = true;
+    return;
+  }
+  currentBigTask.promise = currentBigTask.promise
+    .then(() => {
+      currentBigTask.busy = true;
+    })
+    .then(() => task)
+    .then(() => {
+      currentBigTask.busy = false;
+    });
+}
+
+// @ts-ignore
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
 
 const execAsync = (cmd: any, options: any): Promise<ExecResult> => {
   return new Promise((resolve, reject) => {
@@ -31,7 +63,7 @@ const execAsync = (cmd: any, options: any): Promise<ExecResult> => {
   });
 };
 
-const OT_NODE_HOSTNAME = 'https://v6-pegasus-node-03.origin-trail.network';
+const OT_NODE_HOSTNAME = 'https://v6-pegasus-node-02.origin-trail.network';
 const OT_NODE_PORT = '8900';
 
 const options = {
@@ -53,6 +85,43 @@ const DkgClient = new CustomDkgClient({
   nodeApiVersion: '/v1',
 });
 
+const queue: any = {
+  node: {
+    tasks: [],
+    processing: false,
+  },
+  blockchain: {
+    tasks: [],
+    processing: false,
+  },
+};
+
+setInterval(async () => {
+  try {
+    if (queue.node.processing) return;
+    queue.node.processing = true;
+    while (queue.node.tasks.length > 0) {
+      const task = queue.node.tasks.shift();
+      queue.blockchain.tasks.push(await publishToNode(task).catch(() => null));
+    }
+    queue.node.processing = false;
+  } catch {
+    queue.node.processing = false;
+  }
+}, 10_000);
+
+setInterval(async () => {
+  try {
+    if (queue.blockchain.processing) return;
+    queue.blockchain.processing = true;
+    await registerAsset(queue.blockchain.tasks.filter(Boolean));
+    queue.blockchain.tasks.length = 0;
+    queue.blockchain.processing = false;
+  } catch {
+    queue.blockchain.processing = false;
+  }
+}, 30_000);
+
 const provider = new ethers.JsonRpcProvider(OT_NODE_HOSTNAME);
 const wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
 const contract = new ethers.Contract(KCMulti.address, KCMulti.abi, wallet);
@@ -61,7 +130,7 @@ const server = new McpServer({
   version: "0.0.1",
 });
 
-async function publishToNode(content: any, options: any) {
+async function publishToNode(content: any) {
   const {
     endpoint,
     port,
@@ -111,6 +180,7 @@ async function publishToNode(content: any, options: any) {
     operationId,
     operationResult,
   } = publicationResult;
+  console.log("[NeuroWeb] Published Asset to the node");
 
   return {
     publishOperationResult: operationResult,
@@ -139,15 +209,30 @@ async function publishToNode(content: any, options: any) {
   };
 }
 
-function submitAsset<T>(
-  asset: T
-): Promise<any> {
-  return publishToNode(asset, options);
+async function registerAsset(results: Array<any>) {
+  const tx = await contract.multiPublish(results.map(res => ({
+    publishOperationId: res.publishOperationId,
+    merkleRoot: res.datasetRoot,
+    knowledgeAssetsAmount: kcTools.countDistinctSubjects(res.dataset.public),
+    byteSize: res.datasetSize,
+    epochs: res.epochsNum,
+    tokenAmount: res.estimatedPublishingCost.toString(),
+    isImmutable: res.immutable,
+    paymaster: res.payer,
+    publisherNodeIdentityId: res.publisherNodeIdentityId,
+    publisherNodeR: res.publisherNodeR,
+    publisherNodeVS: res.publisherNodeVS,
+    identityIds: res.identityIds,
+    r: res.r,
+    vs: res.vs,
+  })));
+  console.log(`Asset minted ${tx.hash}`);
+  return await tx.wait();
 }
 
 server.tool(
   "getTokenInfos",
-  "Fetches data about a token, notably its trading pairs",
+  "Fetches data about a token, notably its trading pairs and creates the necessary file for further analysis",
   {
     tokenAddress: z.string(),
   },
@@ -158,6 +243,42 @@ server.tool(
     });
 
     const text = await readFile(path.join(scriptsPath, 'new_tokens_data.json'), 'utf-8');
+    try {
+      const data = JSON.parse(text).pop().token_data;
+      const contract = new ethers.Contract(data.tokenAddress, ERC20, provider);
+      const pair = data.pairs_data[0];
+      queue.node.tasks.push({
+        "@context": "http://schema.org",
+        "@id": `urn:dextrail:v1:pool:${data.chainId}:${pair.pairAddress}`,
+        "@type": "TradingPool",
+        "address": pair.pairAddress,
+        "chainId": data.chainId,
+      });
+      queue.node.tasks.push({
+        "@context": "http://schema.org",
+        "@id": `urn:dextrail:v1:token:${data.chainId}:${data.tokenAddress}`,
+        "@type": "Token",
+        "address": data.tokenAddress,
+        "name": data.name,
+        "symbol": data.symbol,
+        "chainId": data.chainId,
+        "totalSupply": await contract.totalSupply(),
+        "pool": {
+          "@id": `urn:dextrail:v1:pool:${data.chainId}:${pair.pairAddress}`,
+        },
+        "url": `https://dexscreener.com/${data.chainId}/${data.tokenAddress}`,
+        "socialLinks": [
+          pair?.info?.websites?.length ? {
+            "@type": "website",
+            "url": pair.info.websites[0].url,
+          } : undefined,
+          ...pair?.info?.socials?.maps((d: any) => ({
+            "@type": d.type,
+            url: d.url,
+          }))
+        ].filter(Boolean),
+      });
+    } catch {}
     return {
       content: [
         {
@@ -171,18 +292,29 @@ server.tool(
 
 server.tool(
   "analyzeToken",
-  "Analyze the the token data generated by the getTokenInfos tool. It tries to determine whether this token is safe to trade or if it seems like it might be a rug pool. This tool will not work if it is called before `getTokenInfos`",
-  async () => {
-    await execAsync(`${pythonPath} token_analytics_excel.py`, {
+  "Analyze the token transfers to determine whether there are clusters or adresses that seem like they work together and might actually belong to the same person. This tool CANNOT be run before the getTokenInfos one for that given token.",
+  {
+    tokenAddress: z.string(),
+  },
+  async ({ tokenAddress }) => {
+    await execAsync(`${pythonPath} address_clustering_analyzer.py output/aggregated_timeline_${tokenAddress}.json`, {
       cwd: scriptsPath,
       maxBuffer: 1024 * 1024 * 5,
     });
-    await execAsync(`${pythonPath} address_clustering_analyzer.py output/aggregated_timeline.json`, {
-      cwd: scriptsPath,
-      maxBuffer: 1024 * 1024 * 5,
-    });
-    const clusters = JSON.parse(await readFile(path.join(scriptsPath, 'output/address_clusters.json'), 'utf-8'));
-    const { stdout } = await execAsync(`${pythonPath} analyze_cluster_balances.py`, {
+    let clusters: any = null;
+    try {
+      clusters = JSON.parse(await readFile(path.join(scriptsPath, 'output/address_clusters.json'), 'utf-8'));
+      for (const address of clusters.result.addresses) {
+        queue.node.tasks.push({
+          "@context": "http://schema.org",
+          "@id": `urn:dextrail:v1:eoa:ethereum:${address}`,
+          "@type": "ExternallyOwnedAccount",
+          address,
+          chain_id: 'ethereum',
+        });
+      }
+    } catch {}
+    const { stdout, stderr } = await execAsync(`${pythonPath} analyze_cluster_balances.py output/address_clusters.json output/token_analysis_alchemy_balances_${tokenAddress}.json output/aggregated_timeline_${tokenAddress}.json`, {
       cwd: scriptsPath,
       maxBuffer: 1024 * 1024 * 5,
     });
@@ -192,7 +324,7 @@ server.tool(
           type: "text",
           text: JSON.stringify({
             clusters,
-            summary: stdout,
+            summary: { stdout, stderr },
           }),
         },
       ],

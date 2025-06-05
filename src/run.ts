@@ -21,12 +21,14 @@ async function main() {
   console.log(await client.callTool({
     name: "getTokenInfos",
     arguments: {
-      tokenAddress: '0x6c30E214b773a046945A16887Cf661709910A5e5'
+      tokenAddress: '0x8EfdE11f3E0Df0e7Da7feCDf489ed4D27Db59351'
     }
   }));
   console.log(await client.callTool({
     name: "analyzeToken",
-    arguments: {}
+    arguments: {
+      tokenAddress: '0x8EfdE11f3E0Df0e7Da7feCDf489ed4D27Db59351'
+    }
   }));
 }
 
