@@ -265,7 +265,7 @@ class WashTradingDetector:
                 
                 # Determine overall transaction type and initiators
                 transaction_type = "Unknown"
-                initiators = "Unknown"
+                initiators = ""
                 
                 # Clean token address for comparison
                 clean_token_address = self.clean_address(token_address)
@@ -317,7 +317,7 @@ class WashTradingDetector:
                         print(f"      🔄 DEBUG: SWAP - Found {len(unique_participants)} unique participants after filtering token address")
                 
                 # 🚨 CRITICAL ALERT: Check for multiple initiators
-                if initiators != "Unknown" and initiators:
+                if initiators != "" and initiators:
                     initiators_list = [addr.strip() for addr in initiators.split(",") if addr.strip()]
                     if len(initiators_list) > 1:
                         print(f"      🚨🚨🚨 CRITICAL ALERT: MULTIPLE INITIATORS DETECTED! 🚨🚨🚨")
@@ -368,8 +368,8 @@ class WashTradingDetector:
                 transfer_events = group[group['event_type'] == 'Transfer']
                 non_transfer_events = group[group['event_type'] != 'Transfer']
                 
-                print(f"      🏭 DEBUG: Processing mint transaction {tx_hash[:10]}...")
-                print(f"         Found {len(mint_events)} mint events and {len(transfer_events)} transfer events")
+                # print(f"      🏭 DEBUG: Processing mint transaction {tx_hash[:10]}...")
+                # print(f"         Found {len(mint_events)} mint events and {len(transfer_events)} transfer events")
                 
                 # Get mint amounts for comparison
                 mint_amounts = set()
@@ -412,7 +412,7 @@ class WashTradingDetector:
                 
                 # Analyze remaining transfers for mint transaction analysis
                 mint_transaction_type = "MINT"
-                mint_initiators = "Unknown"
+                mint_initiators = ""
                 
                 # Clean addresses for filtering
                 clean_token_address = self.clean_address(token_address)
@@ -424,6 +424,7 @@ class WashTradingDetector:
                 initiator_candidates = []
                 for transfer in transfers_to_keep:
                     clean_from = self.clean_address(transfer['from_address'])
+                    print(f"      🔍 DEBUG: Processing transfer from: {clean_from}")
                     
                     # Exclude token address, pair addresses, and Uniswap routers (V2 and V4)
                     if (clean_from and 
