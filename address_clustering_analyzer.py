@@ -188,7 +188,8 @@ class AddressClusteringAnalyzer:
             Path to the saved result file
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_filename = f"address_clusters_{token_address}_{timestamp}.json"
+        # result_filename = f"address_clusters_{token_address}_{timestamp}.json"
+        result_filename = f"address_clusters.json"
         result_filepath = os.path.join(self.output_dir, result_filename)
         
         try:
