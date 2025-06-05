@@ -1,0 +1,25 @@
+{
+  "name": "dextrail-intel-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.10.0",
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "assertion-tools": "^8.0.6",
+    "dkg.js": "^8.0.14",
+    "dotenv": "^16.5.0",
+    "ethers": "^6.14.3",
+    "zod": "^3.25.51"
+  },
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\""
+  }
+}
