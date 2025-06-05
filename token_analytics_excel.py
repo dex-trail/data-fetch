@@ -61,6 +61,8 @@ class WashTradingDetector:
     
     # Hardcoded addresses for filtering
     UNISWAP_V2_ROUTER = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"  # Uniswap V2 Router
+    UNISWAP_V4_UNIVERSAL_ROUTER = "0x66a9893cc07d91d95644aedd05d03f95e1dba8af"  # Uniswap V4 Universal Router
+    UNISWAP_FEE_COLLECTOR = "0x000000fee13a103a10d593b9ae06b3e05f2e7e1c"  # Uniswap Fee Collector
     
     def __init__(self):
         self.transaction_graph = nx.DiGraph()
@@ -233,18 +235,32 @@ class WashTradingDetector:
                     print("pool_addresses")
                     print(pool_addresses)
                     
+                    # Get router addresses for comparison
+                    clean_v2_router = self.clean_address(self.UNISWAP_V2_ROUTER)
+                    clean_v4_router = self.clean_address(self.UNISWAP_V4_UNIVERSAL_ROUTER)
+                    clean_fee_collector = self.clean_address(self.UNISWAP_FEE_COLLECTOR)
+                    
                     # Determine if this is a buy or sell
-                    if clean_from in pool_addresses:
-                        # Transfer FROM pool → BUY (user receiving tokens)
+                    # BUY: if clean_from is (pool OR v2 router OR v4 router OR fee collector) AND clean_to is NONE of those
+                    from_is_pool_or_router = (clean_from in pool_addresses or 
+                                            clean_from == clean_v2_router or 
+                                            clean_from == clean_v4_router or
+                                            clean_from == clean_fee_collector)
+                    to_is_pool_or_router = (clean_to in pool_addresses or 
+                                          clean_to == clean_v2_router or 
+                                          clean_to == clean_v4_router or
+                                          clean_to == clean_fee_collector)
+                    
+                    if from_is_pool_or_router and not to_is_pool_or_router:
+                        # Transfer FROM (pool/router/collector) → TO (user) → BUY (user receiving tokens)
                         buy_initiators.append(clean_to)
-                        print(f"      📈 BUY detected: Pool {clean_from[:10]}... → User {clean_to[:10]}... (amount: {transfer_value:,.0f})")
-                    elif clean_to in pool_addresses:
-                        # Transfer TO pool → SELL (user sending tokens)
+                        print(f"      📈 BUY detected: Pool/Router/Collector {clean_from[:10]}... → User {clean_to[:10]}... (amount: {transfer_value:,.0f})")
+                    elif to_is_pool_or_router and not from_is_pool_or_router:
+                        # Transfer FROM (user) → TO (pool/router/collector) → SELL (user sending tokens)
                         sell_initiators.append(clean_from)
-                        print(f"      📉 SELL detected: User {clean_from[:10]}... → Pool {clean_to[:10]}... (amount: {transfer_value:,.0f})")
+                        print(f"      📉 SELL detected: User {clean_from[:10]}... → Pool/Router/Collector {clean_to[:10]}... (amount: {transfer_value:,.0f})")
                     else:
-                        # Neither from nor to is a pool - could be router or other contract
-                        # We'll categorize this as unknown for now
+                        # Both are pools/routers/collectors, or neither are - categorize as unknown
                         print(f"      ❓ Unknown transfer: {clean_from[:10]}... → {clean_to[:10]}... (amount: {transfer_value:,.0f})")
                 
                 # Determine overall transaction type and initiators
@@ -400,18 +416,22 @@ class WashTradingDetector:
                 
                 # Clean addresses for filtering
                 clean_token_address = self.clean_address(token_address)
-                clean_uniswap_router = self.clean_address(self.UNISWAP_V2_ROUTER)
+                clean_v2_router = self.clean_address(self.UNISWAP_V2_ROUTER)
+                clean_v4_router = self.clean_address(self.UNISWAP_V4_UNIVERSAL_ROUTER)
+                clean_fee_collector = self.clean_address(self.UNISWAP_FEE_COLLECTOR)
                 
                 # Find initiators from remaining transfers (from addresses)
                 initiator_candidates = []
                 for transfer in transfers_to_keep:
                     clean_from = self.clean_address(transfer['from_address'])
                     
-                    # Exclude token address, pair addresses, and Uniswap router
+                    # Exclude token address, pair addresses, and Uniswap routers (V2 and V4)
                     if (clean_from and 
                         clean_from != clean_token_address and 
                         clean_from not in pair_addresses and 
-                        clean_from != clean_uniswap_router):
+                        clean_from != clean_v2_router and
+                        clean_from != clean_v4_router and
+                        clean_from != clean_fee_collector):
                         initiator_candidates.append(clean_from)
                 
                 if initiator_candidates:
@@ -1910,124 +1930,124 @@ class TokenAnalyticsExcel:
                 import traceback
                 traceback.print_exc()
             
-            # 6. Fetch current balances using Alchemy API
-            try:
-                print(f"   🔍 Checking Alchemy API configuration...")
-                print(f"      API Key available: {'Yes' if self.alchemy_api_key else 'No'}")
-                if self.alchemy_api_key:
-                    print(f"      API Key length: {len(self.alchemy_api_key)}")
-                    print(f"      Base URL: {self.alchemy_base_url[:50]}..." if self.alchemy_base_url else "      Base URL: None")
+            # # 6. Fetch current balances using Alchemy API
+            # try:
+            #     print(f"   🔍 Checking Alchemy API configuration...")
+            #     print(f"      API Key available: {'Yes' if self.alchemy_api_key else 'No'}")
+            #     if self.alchemy_api_key:
+            #         print(f"      API Key length: {len(self.alchemy_api_key)}")
+            #         print(f"      Base URL: {self.alchemy_base_url[:50]}..." if self.alchemy_base_url else "      Base URL: None")
                 
-                # Extract unique addresses from all events
-                unique_addresses = self.extract_unique_addresses(
-                    transfer_df, combined_swaps_v2, combined_swaps_v3, 
-                    combined_mints, combined_burns
-                )
+            #     # Extract unique addresses from all events
+            #     unique_addresses = self.extract_unique_addresses(
+            #         transfer_df, combined_swaps_v2, combined_swaps_v3, 
+            #         combined_mints, combined_burns
+            #     )
                 
-                print(f"   📊 Found {len(unique_addresses)} unique addresses for balance fetching")
+            #     print(f"   📊 Found {len(unique_addresses)} unique addresses for balance fetching")
                 
-                if unique_addresses and self.alchemy_api_key:
-                    print(f"   🌐 Starting Alchemy API balance fetching...")
-                    # Fetch current balances from Alchemy
-                    alchemy_balances_df = await self.fetch_balances_batch(unique_addresses, token_address)
+            #     if unique_addresses and self.alchemy_api_key:
+            #         print(f"   🌐 Starting Alchemy API balance fetching...")
+            #         # Fetch current balances from Alchemy
+            #         alchemy_balances_df = await self.fetch_balances_batch(unique_addresses, token_address)
                     
-                    print(f"   📈 Alchemy API returned {len(alchemy_balances_df)} records")
+            #         print(f"   📈 Alchemy API returned {len(alchemy_balances_df)} records")
                     
-                    if not alchemy_balances_df.empty:
-                        print(f"   📝 Processing Alchemy balance data...")
+            #         if not alchemy_balances_df.empty:
+            #             print(f"   📝 Processing Alchemy balance data...")
                         
-                        # Sort by token balance (descending)
-                        alchemy_balances_df = alchemy_balances_df.sort_values(
-                            'token_balance_raw', ascending=False, na_position='last'
-                        ).reset_index(drop=True)
+            #             # Sort by token balance (descending)
+            #             alchemy_balances_df = alchemy_balances_df.sort_values(
+            #                 'token_balance_raw', ascending=False, na_position='last'
+            #             ).reset_index(drop=True)
                         
-                        # Export main Alchemy balances sheet
-                        alchemy_balances_df.to_excel(writer, sheet_name='Alchemy_Balances', index=False)
-                        print(f"   ✅ Exported {len(alchemy_balances_df)} Alchemy balances to 'Alchemy_Balances' sheet")
+            #             # Export main Alchemy balances sheet
+            #             alchemy_balances_df.to_excel(writer, sheet_name='Alchemy_Balances', index=False)
+            #             print(f"   ✅ Exported {len(alchemy_balances_df)} Alchemy balances to 'Alchemy_Balances' sheet")
                         
-                        # Create top token holders from Alchemy data
-                        top_token_holders = alchemy_balances_df[
-                            alchemy_balances_df['token_balance_raw'] > 0
-                        ].head(50)  # Top 50 token holders
+            #             # Create top token holders from Alchemy data
+            #             top_token_holders = alchemy_balances_df[
+            #                 alchemy_balances_df['token_balance_raw'] > 0
+            #             ].head(50)  # Top 50 token holders
                         
-                        print(f"   🏆 Found {len(top_token_holders)} addresses with token balances")
+            #             print(f"   🏆 Found {len(top_token_holders)} addresses with token balances")
                         
-                        if not top_token_holders.empty:
-                            top_token_holders.to_excel(writer, sheet_name='Top_Token_Holders_Alchemy', index=False)
-                            print(f"   ✅ Exported top {len(top_token_holders)} token holders from Alchemy to 'Top_Token_Holders_Alchemy' sheet")
+            #             if not top_token_holders.empty:
+            #                 top_token_holders.to_excel(writer, sheet_name='Top_Token_Holders_Alchemy', index=False)
+            #                 print(f"   ✅ Exported top {len(top_token_holders)} token holders from Alchemy to 'Top_Token_Holders_Alchemy' sheet")
                         
-                        # Create ETH-rich addresses
-                        eth_rich = alchemy_balances_df[
-                            alchemy_balances_df['eth_balance_eth'].notna() & 
-                            (alchemy_balances_df['eth_balance_eth'] > 0.1)  # More than 0.1 ETH
-                        ].sort_values('eth_balance_eth', ascending=False).head(30)
+            #             # Create ETH-rich addresses
+            #             eth_rich = alchemy_balances_df[
+            #                 alchemy_balances_df['eth_balance_eth'].notna() & 
+            #                 (alchemy_balances_df['eth_balance_eth'] > 0.1)  # More than 0.1 ETH
+            #             ].sort_values('eth_balance_eth', ascending=False).head(30)
                         
-                        print(f"   💰 Found {len(eth_rich)} ETH-rich addresses (>0.1 ETH)")
+            #             print(f"   💰 Found {len(eth_rich)} ETH-rich addresses (>0.1 ETH)")
                         
-                        if not eth_rich.empty:
-                            eth_rich.to_excel(writer, sheet_name='ETH_Rich_Addresses', index=False)
-                            print(f"   ✅ Exported {len(eth_rich)} ETH-rich addresses to 'ETH_Rich_Addresses' sheet")
+            #             if not eth_rich.empty:
+            #                 eth_rich.to_excel(writer, sheet_name='ETH_Rich_Addresses', index=False)
+            #                 print(f"   ✅ Exported {len(eth_rich)} ETH-rich addresses to 'ETH_Rich_Addresses' sheet")
                         
-                        print(f"   🎉 Alchemy data processing completed successfully!")
+            #             print(f"   🎉 Alchemy data processing completed successfully!")
                         
-                    else:
-                        print(f"   ⚠️  No valid Alchemy balances fetched - empty DataFrame returned")
-                        alchemy_balances_df = pd.DataFrame()
-                elif not self.alchemy_api_key:
-                    print(f"   ⚠️  Skipping Alchemy balance fetching - no API key provided")
-                    print(f"   💡 Set ALCHEMY_API_KEY in your .env file to enable balance fetching")
-                    alchemy_balances_df = pd.DataFrame()
-                elif not unique_addresses:
-                    print(f"   ⚠️  No unique addresses found for balance fetching")
-                    alchemy_balances_df = pd.DataFrame()
-                else:
-                    print(f"   ⚠️  Unknown condition preventing Alchemy balance fetching")
-                    alchemy_balances_df = pd.DataFrame()
+            #         else:
+            #             print(f"   ⚠️  No valid Alchemy balances fetched - empty DataFrame returned")
+            #             alchemy_balances_df = pd.DataFrame()
+            #     elif not self.alchemy_api_key:
+            #         print(f"   ⚠️  Skipping Alchemy balance fetching - no API key provided")
+            #         print(f"   💡 Set ALCHEMY_API_KEY in your .env file to enable balance fetching")
+            #         alchemy_balances_df = pd.DataFrame()
+            #     elif not unique_addresses:
+            #         print(f"   ⚠️  No unique addresses found for balance fetching")
+            #         alchemy_balances_df = pd.DataFrame()
+            #     else:
+            #         print(f"   ⚠️  Unknown condition preventing Alchemy balance fetching")
+            #         alchemy_balances_df = pd.DataFrame()
                     
-            except Exception as e:
-                print(f"   ❌ Error fetching Alchemy balances: {e}")
-                import traceback
-                print(f"   🔧 Full error trace:")
-                traceback.print_exc()
-                alchemy_balances_df = pd.DataFrame()
+            # except Exception as e:
+            #     print(f"   ❌ Error fetching Alchemy balances: {e}")
+            #     import traceback
+            #     print(f"   🔧 Full error trace:")
+            #     traceback.print_exc()
+            #     alchemy_balances_df = pd.DataFrame()
             
-            # 7. Create summary sheet
-            summary_data = {
-                "Metric": [
-                    "Token Address", 
-                    "Transfer Events", 
-                    "V2 Swap Events", 
-                    "V3 Swap Events", 
-                    "Mint Events", 
-                    "Burn Events",
-                    "Addresses with Balances (calculated)",
-                    "Total Supply (from transfers)",
-                    "Unique Addresses (all events)",
-                    "Alchemy Balances Fetched",
-                    "🕵️ Wash Trading Risk Level",
-                    "🚨 High Risk Patterns",
-                    "⚠️ Medium Risk Patterns"
-                ],
-                "Value": [
-                    token_address,
-                    len(transfer_df) if not transfer_df.empty else 0,
-                    len(combined_swaps_v2) if not combined_swaps_v2.empty else 0,
-                    len(combined_swaps_v3) if not combined_swaps_v3.empty else 0,
-                    len(combined_mints) if all_mints else 0,
-                    len(combined_burns) if all_burns else 0,
-                    len(balance_df) if not balance_df.empty else 0,
-                    balance_df['balance'].sum() if not balance_df.empty else 0,
-                    len(unique_addresses) if 'unique_addresses' in locals() else 0,
-                    len(alchemy_balances_df) if 'alchemy_balances_df' in locals() and not alchemy_balances_df.empty else 0,
-                    locals().get('risk_level', 'N/A'),
-                    wash_analysis['summary']['high_suspicion_patterns'] if 'wash_analysis' in locals() else 0,
-                    wash_analysis['summary']['medium_suspicion_patterns'] if 'wash_analysis' in locals() else 0
-                ]
-            }
+            # # 7. Create summary sheet
+            # summary_data = {
+            #     "Metric": [
+            #         "Token Address", 
+            #         "Transfer Events", 
+            #         "V2 Swap Events", 
+            #         "V3 Swap Events", 
+            #         "Mint Events", 
+            #         "Burn Events",
+            #         "Addresses with Balances (calculated)",
+            #         "Total Supply (from transfers)",
+            #         "Unique Addresses (all events)",
+            #         "Alchemy Balances Fetched",
+            #         "🕵️ Wash Trading Risk Level",
+            #         "🚨 High Risk Patterns",
+            #         "⚠️ Medium Risk Patterns"
+            #     ],
+            #     "Value": [
+            #         token_address,
+            #         len(transfer_df) if not transfer_df.empty else 0,
+            #         len(combined_swaps_v2) if not combined_swaps_v2.empty else 0,
+            #         len(combined_swaps_v3) if not combined_swaps_v3.empty else 0,
+            #         len(combined_mints) if all_mints else 0,
+            #         len(combined_burns) if all_burns else 0,
+            #         len(balance_df) if not balance_df.empty else 0,
+            #         balance_df['balance'].sum() if not balance_df.empty else 0,
+            #         len(unique_addresses) if 'unique_addresses' in locals() else 0,
+            #         len(alchemy_balances_df) if 'alchemy_balances_df' in locals() and not alchemy_balances_df.empty else 0,
+            #         locals().get('risk_level', 'N/A'),
+            #         wash_analysis['summary']['high_suspicion_patterns'] if 'wash_analysis' in locals() else 0,
+            #         wash_analysis['summary']['medium_suspicion_patterns'] if 'wash_analysis' in locals() else 0
+            #     ]
+            # }
             
-            summary_df = pd.DataFrame(summary_data)
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-            print(f"   ✅ Created Summary sheet")
+            # summary_df = pd.DataFrame(summary_data)
+            # summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            # print(f"   ✅ Created Summary sheet")
         
         print(f"   💾 Saved complete analysis to: {filepath}")
         return filepath
@@ -2241,75 +2261,6 @@ class TokenAnalyticsExcel:
         # Return all data for debugging - we'll filter later if needed
         return balance_df
 
-async def test_alchemy_configuration():
-    """
-    Test function to verify Alchemy API configuration and basic functionality.
-    """
-    print("🔧 Testing Alchemy API Configuration...")
-    print("=" * 50)
-    
-    # Load environment variables
-    load_dotenv()
-    
-    # Check if API key is available
-    api_key = os.getenv('ALCHEMY_API_KEY')
-    print(f"1. API Key Status: {'✅ Found' if api_key else '❌ Not found'}")
-    
-    if api_key:
-        print(f"   API Key length: {len(api_key)} characters")
-        print(f"   API Key starts with: {api_key[:8]}...")
-    
-    # Initialize analyzer
-    analyzer = TokenAnalyticsExcel()
-    print(f"2. Analyzer initialization: {'✅ Success' if analyzer else '❌ Failed'}")
-    print(f"   Alchemy API key detected: {'✅ Yes' if analyzer.alchemy_api_key else '❌ No'}")
-    print(f"   Base URL configured: {'✅ Yes' if analyzer.alchemy_base_url else '❌ No'}")
-    
-    if not analyzer.alchemy_api_key:
-        print("\n❌ Cannot proceed without API key. Please check your .env file.")
-        return
-    
-    # Test with a simple address
-    test_address = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"  # Vitalik's address
-    test_token = "0xA0b86a33E6441fb64DF39c7E45c1c89Fd6b14Fb9"  # USDC
-    
-    print(f"\n3. Testing API calls with address: {test_address}")
-    
-    try:
-        connector = aiohttp.TCPConnector()
-        timeout = aiohttp.ClientTimeout(total=30)
-        
-        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            # Test ETH balance
-            print("   Testing ETH balance fetch...")
-            eth_balance = await analyzer.fetch_eth_balance(session, test_address)
-            print(f"   ETH balance result: {'✅ Success' if eth_balance is not None else '❌ Failed'}")
-            if eth_balance is not None:
-                print(f"   ETH balance: {eth_balance / 1e18:.4f} ETH")
-            
-            # Test token balance
-            print("   Testing token balance fetch...")
-            token_balance = await analyzer.fetch_token_balance(session, test_address, test_token)
-            print(f"   Token balance result: {'✅ Success' if token_balance is not None else '❌ Failed'}")
-            if token_balance is not None:
-                print(f"   Token balance: {token_balance}")
-        
-        print("\n4. Testing batch function...")
-        test_addresses = {test_address}
-        batch_result = await analyzer.fetch_balances_batch(test_addresses, test_token, batch_size=1)
-        print(f"   Batch result: {'✅ Success' if not batch_result.empty else '❌ Empty result'}")
-        if not batch_result.empty:
-            print(f"   Batch returned {len(batch_result)} records")
-            print("   Sample data:")
-            print(batch_result.head().to_string(index=False))
-        
-    except Exception as e:
-        print(f"❌ Test failed with error: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    print("\n" + "=" * 50)
-    print("🏁 Test completed!")
 
 async def main():
     # Parse command line arguments
@@ -2444,10 +2395,6 @@ Examples:
 if __name__ == "__main__":
     import sys
     
-    # Check if we want to run the test function
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        print("🧪 Running Alchemy API test...")
-        asyncio.run(test_alchemy_configuration())
-    else:
-        asyncio.run(main())
+
+    asyncio.run(main())
         # Script execution complete
