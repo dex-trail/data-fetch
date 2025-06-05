@@ -5,13 +5,14 @@ import pandas as pd
 import os
 import aiohttp
 import networkx as nx
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from hypersync import BlockField, TransactionField, LogField, ClientConfig
 from typing import List, Dict, Any, Optional, Set, Tuple
 from collections import defaultdict, Counter
 import numpy as np
 import argparse
+import time
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1931,86 +1932,146 @@ class TokenAnalyticsExcel:
                 import traceback
                 traceback.print_exc()
             
-            # # 6. Fetch current balances using Alchemy API
-            # try:
-            #     print(f"   🔍 Checking Alchemy API configuration...")
-            #     print(f"      API Key available: {'Yes' if self.alchemy_api_key else 'No'}")
-            #     if self.alchemy_api_key:
-            #         print(f"      API Key length: {len(self.alchemy_api_key)}")
-            #         print(f"      Base URL: {self.alchemy_base_url[:50]}..." if self.alchemy_base_url else "      Base URL: None")
+            # 6. Fetch current balances using Alchemy API
+            try:
+                print(f"   🔍 Checking Alchemy API configuration...")
+                print(f"      API Key available: {'Yes' if self.alchemy_api_key else 'No'}")
+                if self.alchemy_api_key:
+                    print(f"      API Key length: {len(self.alchemy_api_key)}")
+                    print(f"      Base URL: {self.alchemy_base_url[:50]}..." if self.alchemy_base_url else "      Base URL: None")
                 
-            #     # Extract unique addresses from all events
-            #     unique_addresses = self.extract_unique_addresses(
-            #         transfer_df, combined_swaps_v2, combined_swaps_v3, 
-            #         combined_mints, combined_burns
-            #     )
+                # Extract unique addresses from all events
+                unique_addresses = self.extract_unique_addresses(
+                    transfer_df, combined_swaps_v2, combined_swaps_v3, 
+                    combined_mints, combined_burns
+                )
                 
-            #     print(f"   📊 Found {len(unique_addresses)} unique addresses for balance fetching")
+                print(f"   📊 Found {len(unique_addresses)} unique addresses for balance fetching")
                 
-            #     if unique_addresses and self.alchemy_api_key:
-            #         print(f"   🌐 Starting Alchemy API balance fetching...")
-            #         # Fetch current balances from Alchemy
-            #         alchemy_balances_df = await self.fetch_balances_batch(unique_addresses, token_address)
+                if unique_addresses and self.alchemy_api_key:
+                    print(f"   🌐 Starting Alchemy API balance fetching...")
+                    # Fetch current balances from Alchemy
+                    alchemy_balances_df = await self.fetch_balances_batch(unique_addresses, token_address)
                     
-            #         print(f"   📈 Alchemy API returned {len(alchemy_balances_df)} records")
+                    print(f"   📈 Alchemy API returned {len(alchemy_balances_df)} records")
                     
-            #         if not alchemy_balances_df.empty:
-            #             print(f"   📝 Processing Alchemy balance data...")
+                    if not alchemy_balances_df.empty:
+                        print(f"   📝 Processing Alchemy balance data...")
                         
-            #             # Sort by token balance (descending)
-            #             alchemy_balances_df = alchemy_balances_df.sort_values(
-            #                 'token_balance_raw', ascending=False, na_position='last'
-            #             ).reset_index(drop=True)
+                        # Sort by token balance (descending)
+                        alchemy_balances_df = alchemy_balances_df.sort_values(
+                            'token_balance_raw', ascending=False, na_position='last'
+                        ).reset_index(drop=True)
                         
-            #             # Export main Alchemy balances sheet
-            #             alchemy_balances_df.to_excel(writer, sheet_name='Alchemy_Balances', index=False)
-            #             print(f"   ✅ Exported {len(alchemy_balances_df)} Alchemy balances to 'Alchemy_Balances' sheet")
+                        # Export main Alchemy balances sheet
+                        alchemy_balances_df.to_excel(writer, sheet_name='Alchemy_Balances', index=False)
+                        print(f"   ✅ Exported {len(alchemy_balances_df)} Alchemy balances to 'Alchemy_Balances' sheet")
                         
-            #             # Create top token holders from Alchemy data
-            #             top_token_holders = alchemy_balances_df[
-            #                 alchemy_balances_df['token_balance_raw'] > 0
-            #             ].head(50)  # Top 50 token holders
+                        # Export Alchemy balances to JSON file
+                        try:
+                            # Create JSON filename based on Excel filename
+                            json_filename = filename_base + "_alchemy_balances.json"
+                            json_filepath = os.path.join(self.output_dir, json_filename)
+                            
+                            # Convert DataFrame to JSON-serializable format
+                            alchemy_balances_json = alchemy_balances_df.to_dict('records')
+                            
+                            # Add metadata
+                            json_export = {
+                                "metadata": {
+                                    "token_address": token_address,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "total_addresses": len(alchemy_balances_df),
+                                    "export_type": "alchemy_balances"
+                                },
+                                "balances": alchemy_balances_json
+                            }
+                            
+                            # Write to JSON file
+                            with open(json_filepath, 'w', encoding='utf-8') as f:
+                                json.dump(json_export, f, indent=2, ensure_ascii=False)
+                            
+                            print(f"   💾 Saved Alchemy balances to JSON: {json_filepath}")
+                            
+                        except Exception as json_error:
+                            print(f"   ⚠️  Error saving Alchemy balances to JSON: {json_error}")
                         
-            #             print(f"   🏆 Found {len(top_token_holders)} addresses with token balances")
+                        # Create top token holders from Alchemy data
+                        top_token_holders = alchemy_balances_df[
+                            alchemy_balances_df['token_balance_raw'] > 0
+                        ].head(50)  # Top 50 token holders
                         
-            #             if not top_token_holders.empty:
-            #                 top_token_holders.to_excel(writer, sheet_name='Top_Token_Holders_Alchemy', index=False)
-            #                 print(f"   ✅ Exported top {len(top_token_holders)} token holders from Alchemy to 'Top_Token_Holders_Alchemy' sheet")
+                        print(f"   🏆 Found {len(top_token_holders)} addresses with token balances")
                         
-            #             # Create ETH-rich addresses
-            #             eth_rich = alchemy_balances_df[
-            #                 alchemy_balances_df['eth_balance_eth'].notna() & 
-            #                 (alchemy_balances_df['eth_balance_eth'] > 0.1)  # More than 0.1 ETH
-            #             ].sort_values('eth_balance_eth', ascending=False).head(30)
+                        if not top_token_holders.empty:
+                            top_token_holders.to_excel(writer, sheet_name='Top_Token_Holders_Alchemy', index=False)
+                            print(f"   ✅ Exported top {len(top_token_holders)} token holders from Alchemy to 'Top_Token_Holders_Alchemy' sheet")
                         
-            #             print(f"   💰 Found {len(eth_rich)} ETH-rich addresses (>0.1 ETH)")
+                        # Create ETH-rich addresses
+                        eth_rich = alchemy_balances_df[
+                            alchemy_balances_df['eth_balance_eth'].notna() & 
+                            (alchemy_balances_df['eth_balance_eth'] > 0.1)  # More than 0.1 ETH
+                        ].sort_values('eth_balance_eth', ascending=False).head(30)
                         
-            #             if not eth_rich.empty:
-            #                 eth_rich.to_excel(writer, sheet_name='ETH_Rich_Addresses', index=False)
-            #                 print(f"   ✅ Exported {len(eth_rich)} ETH-rich addresses to 'ETH_Rich_Addresses' sheet")
+                        print(f"   💰 Found {len(eth_rich)} ETH-rich addresses (>0.1 ETH)")
                         
-            #             print(f"   🎉 Alchemy data processing completed successfully!")
+                        if not eth_rich.empty:
+                            eth_rich.to_excel(writer, sheet_name='ETH_Rich_Addresses', index=False)
+                            print(f"   ✅ Exported {len(eth_rich)} ETH-rich addresses to 'ETH_Rich_Addresses' sheet")
                         
-            #         else:
-            #             print(f"   ⚠️  No valid Alchemy balances fetched - empty DataFrame returned")
-            #             alchemy_balances_df = pd.DataFrame()
-            #     elif not self.alchemy_api_key:
-            #         print(f"   ⚠️  Skipping Alchemy balance fetching - no API key provided")
-            #         print(f"   💡 Set ALCHEMY_API_KEY in your .env file to enable balance fetching")
-            #         alchemy_balances_df = pd.DataFrame()
-            #     elif not unique_addresses:
-            #         print(f"   ⚠️  No unique addresses found for balance fetching")
-            #         alchemy_balances_df = pd.DataFrame()
-            #     else:
-            #         print(f"   ⚠️  Unknown condition preventing Alchemy balance fetching")
-            #         alchemy_balances_df = pd.DataFrame()
+                        # Export additional Alchemy data to JSON
+                        try:
+                            # Add top token holders and ETH-rich addresses to the JSON export
+                            if not top_token_holders.empty or not eth_rich.empty:
+                                # Create additional JSON filename for detailed data
+                                detailed_json_filename = filename_base + "_alchemy_detailed.json"
+                                detailed_json_filepath = os.path.join(self.output_dir, detailed_json_filename)
+                                
+                                detailed_json_export = {
+                                    "metadata": {
+                                        "token_address": token_address,
+                                        "timestamp": datetime.now().isoformat(),
+                                        "total_addresses": len(alchemy_balances_df),
+                                        "top_holders_count": len(top_token_holders),
+                                        "eth_rich_count": len(eth_rich),
+                                        "export_type": "alchemy_detailed_balances"
+                                    },
+                                    "top_token_holders": top_token_holders.to_dict('records') if not top_token_holders.empty else [],
+                                    "eth_rich_addresses": eth_rich.to_dict('records') if not eth_rich.empty else [],
+                                    "all_balances": alchemy_balances_df.to_dict('records')
+                                }
+                                
+                                # Write detailed JSON file
+                                with open(detailed_json_filepath, 'w', encoding='utf-8') as f:
+                                    json.dump(detailed_json_export, f, indent=2, ensure_ascii=False)
+                                
+                                print(f"   💾 Saved detailed Alchemy data to JSON: {detailed_json_filepath}")
+                                
+                        except Exception as detailed_json_error:
+                            print(f"   ⚠️  Error saving detailed Alchemy data to JSON: {detailed_json_error}")
+                        
+                        print(f"   🎉 Alchemy data processing completed successfully!")
+                        
+                    else:
+                        print(f"   ⚠️  No valid Alchemy balances fetched - empty DataFrame returned")
+                        alchemy_balances_df = pd.DataFrame()
+                elif not self.alchemy_api_key:
+                    print(f"   ⚠️  Skipping Alchemy balance fetching - no API key provided")
+                    print(f"   💡 Set ALCHEMY_API_KEY in your .env file to enable balance fetching")
+                    alchemy_balances_df = pd.DataFrame()
+                elif not unique_addresses:
+                    print(f"   ⚠️  No unique addresses found for balance fetching")
+                    alchemy_balances_df = pd.DataFrame()
+                else:
+                    print(f"   ⚠️  Unknown condition preventing Alchemy balance fetching")
+                    alchemy_balances_df = pd.DataFrame()
                     
-            # except Exception as e:
-            #     print(f"   ❌ Error fetching Alchemy balances: {e}")
-            #     import traceback
-            #     print(f"   🔧 Full error trace:")
-            #     traceback.print_exc()
-            #     alchemy_balances_df = pd.DataFrame()
+            except Exception as e:
+                print(f"   ❌ Error fetching Alchemy balances: {e}")
+                import traceback
+                print(f"   🔧 Full error trace:")
+                traceback.print_exc()
+                alchemy_balances_df = pd.DataFrame()
             
             # # 7. Create summary sheet
             # summary_data = {
