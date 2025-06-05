@@ -1,92 +1,87 @@
 [
   {
-    "detected_at": "2025-06-05T07:04:31.306425",
+    "detected_at": "2025-06-05T10:14:57.111972",
     "data_type": "address_updates",
     "token_data": {
       "chainId": "ethereum",
-      "tokenAddress": "0x05a89897a9d7f8a8c1f321e61e97ce239500fa70",
+      "tokenAddress": "0xe587d1689a7eba29415873abfeb1da887b93f06a",
       "pairs_data": [
         {
           "chainId": "ethereum",
           "dexId": "uniswap",
-          "url": "https://dexscreener.com/ethereum/0x2c39cd91b96e45ef2e68d73f9a821dfd8659461b",
-          "pairAddress": "0x2c39CD91b96E45EF2E68D73F9A821dFd8659461B",
+          "url": "https://dexscreener.com/ethereum/0x956da79a9b40d34a14448b20248a951ae62ea764",
+          "pairAddress": "0x956DA79A9B40D34A14448b20248A951aE62EA764",
           "labels": [
             "v2"
           ],
           "baseToken": {
-            "address": "0x05a89897A9d7F8A8C1f321e61e97ce239500fa70",
-            "name": "Hawk Tuah",
-            "symbol": "HAWK"
+            "address": "0xe587d1689a7Eba29415873AbfEB1Da887b93f06A",
+            "name": "ETH Foundation Treasury Policy",
+            "symbol": "EFTP"
           },
           "quoteToken": {
             "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "name": "Wrapped Ether",
             "symbol": "WETH"
           },
-          "priceNative": "0.0000000001959",
-          "priceUsd": "0.0000005168",
+          "priceNative": "0.00000001152",
+          "priceUsd": "0.00003005",
           "txns": {
             "m5": {
               "buys": 0,
               "sells": 0
             },
             "h1": {
-              "buys": 0,
-              "sells": 0
+              "buys": 5,
+              "sells": 8
             },
             "h6": {
-              "buys": 0,
-              "sells": 0
+              "buys": 56,
+              "sells": 66
             },
             "h24": {
-              "buys": 0,
-              "sells": 1
+              "buys": 666,
+              "sells": 527
             }
           },
           "volume": {
-            "h24": 20.07,
-            "h6": 0,
-            "h1": 0,
+            "h24": 289089.43,
+            "h6": 18296.63,
+            "h1": 1280.43,
             "m5": 0
           },
-          "priceChange": {},
-          "liquidity": {
-            "usd": 29492.85,
-            "base": 28529936644,
-            "quote": 5.5918
+          "priceChange": {
+            "h1": 13.95,
+            "h6": -21.33,
+            "h24": 1758
           },
-          "fdv": 5168754,
-          "marketCap": 5168754,
-          "pairCreatedAt": 1733220083000,
+          "liquidity": {
+            "usd": 12196.42,
+            "base": 202910309,
+            "quote": 2.3393
+          },
+          "fdv": 30054,
+          "marketCap": 30054,
+          "pairCreatedAt": 1749067811000,
           "info": {
-            "imageUrl": "https://dd.dexscreener.com/ds-data/tokens/ethereum/0x05a89897a9d7f8a8c1f321e61e97ce239500fa70.png?key=68f1b2",
-            "header": "https://dd.dexscreener.com/ds-data/tokens/ethereum/0x05a89897a9d7f8a8c1f321e61e97ce239500fa70/header.png?key=68f1b2",
-            "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0x05a89897a9d7f8a8c1f321e61e97ce239500fa70?timestamp=1749096300000",
-            "websites": [
-              {
-                "label": "Website",
-                "url": "https://overhere.tech/"
-              }
-            ],
+            "imageUrl": "https://dd.dexscreener.com/ds-data/tokens/ethereum/0xe587d1689a7eba29415873abfeb1da887b93f06a.png?key=535aa2",
+            "header": "https://dd.dexscreener.com/ds-data/tokens/ethereum/0xe587d1689a7eba29415873abfeb1da887b93f06a/header.png?key=535aa2",
+            "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0xe587d1689a7eba29415873abfeb1da887b93f06a?timestamp=1749107700000",
+            "websites": [],
             "socials": [
               {
-                "type": "twitter",
-                "url": "https://x.com/OverHere_Eth"
-              },
-              {
                 "type": "telegram",
-                "url": "https://t.me/OverHereCommunityEth"
+                "url": "https://t.me/EFTP_ERC"
               }
             ]
           }
         }
       ],
       "pair_count": 1,
-      "fetched_at": "2025-06-05T07:04:31.105829",
-      "symbol": "HAWK",
-      "name": "Hawk Tuah",
-      "total_liquidity_usd": 29492.85
+      "fetched_at": "2025-06-05T10:14:56.911211",
+      "symbol": "EFTP",
+      "name": "ETH Foundation Treasury Policy",
+      "total_liquidity_usd": 12196.42
     }
   }
 ]

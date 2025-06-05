@@ -7,6 +7,10 @@ import json
 import sys
 from decimal import Decimal, getcontext
 from typing import Dict, List, Optional
+import os
+
+# Import the EtherscanSourceFetcher from fetch_token_source.py
+from fetch_token_source import EtherscanSourceFetcher
 
 # Set precision for decimal calculations
 getcontext().prec = 50
@@ -147,6 +151,8 @@ def analyze_token_data() -> Dict:
         'cluster_analysis': {},
         'pool_analysis': {},
         'total_supply_analysis': {},
+        'contract_analysis': {},
+        'rugpull_analysis': {},
         'comparative_analysis': {},
         'errors': []
     }
@@ -201,6 +207,108 @@ def analyze_token_data() -> Dict:
     else:
         results['errors'].append("Could not identify pool address")
     
+    # Fetch contract source code and perform rugpull analysis
+    if token_address:
+        try:
+            print(f"Fetching contract source code for token: {token_address}")
+            
+            # Initialize the Etherscan source fetcher
+            fetcher = EtherscanSourceFetcher()
+            
+            # Fetch source code
+            source_response = fetcher.fetch_source_code(token_address)
+            
+            if source_response and 'result' in source_response and len(source_response['result']) > 0:
+                contract_info = source_response['result'][0]
+                contract_name = contract_info.get('ContractName', 'Unknown')
+                source_code = contract_info.get('SourceCode', '')
+                
+                # Store contract analysis results
+                results['contract_analysis'] = {
+                    'contract_name': contract_name,
+                    'compiler_version': contract_info.get('CompilerVersion', 'N/A'),
+                    'optimization_used': contract_info.get('OptimizationUsed') == '1',
+                    'runs': contract_info.get('Runs', 'N/A'),
+                    'evm_version': contract_info.get('EVMVersion', 'N/A'),
+                    'license_type': contract_info.get('LicenseType', 'N/A'),
+                    'is_proxy': contract_info.get('Proxy') == '1',
+                    'implementation': contract_info.get('Implementation', 'N/A'),
+                    'source_code_available': bool(source_code and source_code.strip())
+                }
+                
+                # Perform rugpull analysis if source code is available
+                if source_code and source_code.strip():
+                    print("Performing rugpull risk analysis...")
+                    
+                    # Handle multi-file contracts (JSON format)
+                    formatted_source_code = source_code
+                    if source_code.startswith('{'):
+                        try:
+                            # Remove extra braces if present
+                            if source_code.startswith('{{') and source_code.endswith('}}'):
+                                source_code = source_code[1:-1]
+                            
+                            source_json = json.loads(source_code)
+                            
+                            if 'sources' in source_json:
+                                # Multi-file contract - combine all source files
+                                formatted_parts = []
+                                for file_path, file_data in source_json['sources'].items():
+                                    file_content = file_data.get('content', '')
+                                    formatted_parts.append(file_content)
+                                formatted_source_code = "\n".join(formatted_parts)
+                        except json.JSONDecodeError:
+                            # If JSON parsing fails, use as plain text
+                            pass
+                    
+                    # Perform rugpull analysis
+                    rugpull_analysis_raw = fetcher.analyze_rugpull_risk(formatted_source_code, contract_name)
+                    
+                    # Try to parse the rugpull analysis as JSON
+                    try:
+                        # Strip markdown formatting if present
+                        cleaned_analysis = rugpull_analysis_raw.strip()
+                        if cleaned_analysis.startswith('```json'):
+                            # Remove ```json from the start and ``` from the end
+                            cleaned_analysis = cleaned_analysis[7:]  # Remove ```json
+                            if cleaned_analysis.endswith('```'):
+                                cleaned_analysis = cleaned_analysis[:-3]  # Remove closing ```
+                            cleaned_analysis = cleaned_analysis.strip()
+                        elif cleaned_analysis.startswith('```'):
+                            # Remove generic ``` formatting
+                            cleaned_analysis = cleaned_analysis[3:]
+                            if cleaned_analysis.endswith('```'):
+                                cleaned_analysis = cleaned_analysis[:-3]
+                            cleaned_analysis = cleaned_analysis.strip()
+                        
+                        rugpull_analysis = json.loads(cleaned_analysis)
+                        results['rugpull_analysis'] = rugpull_analysis
+                    except json.JSONDecodeError as e:
+                        # If it's still not valid JSON, store as raw text with error details
+                        results['rugpull_analysis'] = {
+                            'error': f'Failed to parse rugpull analysis as JSON: {str(e)}',
+                            'raw_analysis': rugpull_analysis_raw
+                        }
+                else:
+                    results['rugpull_analysis'] = {
+                        'error': 'No source code available for rugpull analysis'
+                    }
+            else:
+                results['contract_analysis'] = {
+                    'error': 'Failed to fetch contract source code'
+                }
+                results['rugpull_analysis'] = {
+                    'error': 'Contract source code not available'
+                }
+        except Exception as e:
+            error_msg = f"Error during contract analysis: {str(e)}"
+            print(f"Warning: {error_msg}")
+            results['errors'].append(error_msg)
+            results['contract_analysis'] = {'error': error_msg}
+            results['rugpull_analysis'] = {'error': error_msg}
+    else:
+        results['errors'].append("No token address available for contract analysis")
+    
     # Comparative analysis
     if cluster_analysis and pool_address and total_supply:
         pool_analysis = get_pool_balance(pool_address, balances_data)
@@ -221,7 +329,7 @@ def analyze_token_data() -> Dict:
                 'total_supply_raw': total_supply
             }
 
-    results = results['comparative_analysis']
+    # results = results['comparative_analysis']
     
     return results
 
