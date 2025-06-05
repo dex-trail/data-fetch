@@ -235,16 +235,11 @@ class AddressClusteringAnalyzer:
         print(f"\n🎯 Starting Graph-based Address Clustering Analysis")
         print(f"📄 Input JSON: {json_file}")
         
-        # Extract token address from filename
-        token_address = "unknown"
-        if "aggregated_timeline_" in os.path.basename(json_file):
-            token_address = os.path.basename(json_file).replace("aggregated_timeline_", "").replace(".json", "")
-        
         # Load timeline data
         timeline_data = self.load_aggregated_timeline(json_file)
         
         # Extract addresses for exclusion
-        token_addr, pair_addr = self.extract_addresses_from_timeline(timeline_data)
+        token_address, pair_addr = self.extract_addresses_from_timeline(timeline_data)
         
         # Convert to CSV format
         csv_data = self.convert_timeline_to_csv_string(timeline_data)
@@ -254,7 +249,7 @@ class AddressClusteringAnalyzer:
             return ""
         
         # Analyze with graph function
-        analysis_result = self.analyze_with_graph(csv_data, token_addr, pair_addr)
+        analysis_result = self.analyze_with_graph(csv_data, token_address, pair_addr)
         
         # Save results
         result_filepath = self.save_analysis_result(analysis_result, token_address)
