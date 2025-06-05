@@ -193,9 +193,13 @@ class DexScreenerMonitor:
         try:
             url = f"{self.pairs_api_url}/{chain_id}/{token_address}"
             response = requests.get(url, timeout=30)
+            print(response)
             response.raise_for_status()
             
             pairs_data = response.json()
+            print(pairs_data)
+            print(len(pairs_data))
+            
             if not isinstance(pairs_data, list):
                 self.logger.warning(f"Token pairs API response is not a list for {chain_id}:{token_address}")
                 return None
@@ -356,9 +360,11 @@ Trading Pairs:
     
     def fetch_address_data(self, chain_id: str, token_address: str) -> Optional[Dict]:
         """Fetch comprehensive data for a specific address including pairs."""
+        print('fetch_address_data')
         try:
             # Fetch pairs data
             pairs_data = self.fetch_token_pairs(chain_id, token_address)
+            print(pairs_data)
             
             if pairs_data:
                 # Filter pairs to only include Uniswap v2 and v3
