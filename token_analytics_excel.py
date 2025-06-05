@@ -1398,191 +1398,191 @@ class TokenAnalyticsExcel:
             df = df.sort_values(['block_number', 'transaction_hash']).reset_index(drop=True)
         return df
     
-    def calculate_token_balances(self, token_address: str, transfer_df: pd.DataFrame, 
-                                swap_v2_df: pd.DataFrame, swap_v3_df: pd.DataFrame, 
-                                mint_df: pd.DataFrame, burn_df: pd.DataFrame,
-                                token_data: Dict[str, Any]) -> pd.DataFrame:
-        """Calculate current token balances for each address based on transfers, swaps, mints, and burns."""
+    # def calculate_token_balances(self, token_address: str, transfer_df: pd.DataFrame, 
+    #                             swap_v2_df: pd.DataFrame, swap_v3_df: pd.DataFrame, 
+    #                             mint_df: pd.DataFrame, burn_df: pd.DataFrame,
+    #                             token_data: Dict[str, Any]) -> pd.DataFrame:
+    #     """Calculate current token balances for each address based on transfers, swaps, mints, and burns."""
         
-        print(f"   📊 Calculating token balances for {token_address}...")
+    #     print(f"   📊 Calculating token balances for {token_address}...")
         
-        # Initialize balance tracking
-        balances = defaultdict(int)  # address -> balance
+    #     # Initialize balance tracking
+    #     balances = defaultdict(int)  # address -> balance
         
-        # 1. Process Transfer events
-        if not transfer_df.empty:
-            print(f"      Processing {len(transfer_df)} transfer events...")
-            for _, transfer in transfer_df.iterrows():
-                from_addr = transfer['from_address']
-                to_addr = transfer['to_address']
-                value = int(transfer['value'])
+    #     # 1. Process Transfer events
+    #     if not transfer_df.empty:
+    #         print(f"      Processing {len(transfer_df)} transfer events...")
+    #         for _, transfer in transfer_df.iterrows():
+    #             from_addr = transfer['from_address']
+    #             to_addr = transfer['to_address']
+    #             value = int(transfer['value'])
                 
-                # Decrease sender's balance (except for minting from 0x0)
-                if from_addr != "0x0000000000000000000000000000000000000000":
-                    balances[from_addr] -= value
+    #             # Decrease sender's balance (except for minting from 0x0)
+    #             if from_addr != "0x0000000000000000000000000000000000000000":
+    #                 balances[from_addr] -= value
                 
-                # Increase receiver's balance (except for burning to 0x0)
-                if to_addr != "0x0000000000000000000000000000000000000000":
-                    balances[to_addr] += value
+    #             # Increase receiver's balance (except for burning to 0x0)
+    #             if to_addr != "0x0000000000000000000000000000000000000000":
+    #                 balances[to_addr] += value
         
-        # 2. Process Swap events (more complex - need to determine token position in pairs)
-        pairs_data = token_data["token_data"].get("pairs_data", [])
+    #     # 2. Process Swap events (more complex - need to determine token position in pairs)
+    #     pairs_data = token_data["token_data"].get("pairs_data", [])
         
-        # Create a mapping of pair addresses to token positions
-        pair_token_positions = {}
-        for pair_info in pairs_data:
-            pair_address = pair_info["pairAddress"]
-            # Try to determine if our token is token0 or token1 in the pair
-            # This would typically require additional contract calls, but we'll make educated guesses
-            pair_token_positions[pair_address] = 0  # Assume token0 for now
+    #     # Create a mapping of pair addresses to token positions
+    #     pair_token_positions = {}
+    #     for pair_info in pairs_data:
+    #         pair_address = pair_info["pairAddress"]
+    #         # Try to determine if our token is token0 or token1 in the pair
+    #         # This would typically require additional contract calls, but we'll make educated guesses
+    #         pair_token_positions[pair_address] = 0  # Assume token0 for now
         
-        # Process V2 Swaps
-        if not swap_v2_df.empty:
-            print(f"      Processing {len(swap_v2_df)} V2 swap events...")
-            for _, swap in swap_v2_df.iterrows():
-                pair_address = swap['pair_address']
-                sender = swap['sender']
-                to = swap['to']
+    #     # Process V2 Swaps
+    #     if not swap_v2_df.empty:
+    #         print(f"      Processing {len(swap_v2_df)} V2 swap events...")
+    #         for _, swap in swap_v2_df.iterrows():
+    #             pair_address = swap['pair_address']
+    #             sender = swap['sender']
+    #             to = swap['to']
                 
-                # Determine token position (0 or 1) in the pair
-                token_position = pair_token_positions.get(pair_address, 0)
+    #             # Determine token position (0 or 1) in the pair
+    #             token_position = pair_token_positions.get(pair_address, 0)
                 
-                if token_position == 0:
-                    # Our token is token0
-                    amount_in = int(swap['amount0In'])
-                    amount_out = int(swap['amount0Out'])
-                else:
-                    # Our token is token1
-                    amount_in = int(swap['amount1In'])
-                    amount_out = int(swap['amount1Out'])
+    #             if token_position == 0:
+    #                 # Our token is token0
+    #                 amount_in = int(swap['amount0In'])
+    #                 amount_out = int(swap['amount0Out'])
+    #             else:
+    #                 # Our token is token1
+    #                 amount_in = int(swap['amount1In'])
+    #                 amount_out = int(swap['amount1Out'])
                 
-                # Adjust balances: sender loses amount_in, receiver gains amount_out
-                if amount_in > 0:
-                    balances[sender] -= amount_in
-                if amount_out > 0:
-                    balances[to] += amount_out
+    #             # Adjust balances: sender loses amount_in, receiver gains amount_out
+    #             if amount_in > 0:
+    #                 balances[sender] -= amount_in
+    #             if amount_out > 0:
+    #                 balances[to] += amount_out
         
-        # Process V3 Swaps
-        if not swap_v3_df.empty:
-            print(f"      Processing {len(swap_v3_df)} V3 swap events...")
-            for _, swap in swap_v3_df.iterrows():
-                pair_address = swap['pair_address']
-                sender = swap['sender']
-                recipient = swap['recipient']
+    #     # Process V3 Swaps
+    #     if not swap_v3_df.empty:
+    #         print(f"      Processing {len(swap_v3_df)} V3 swap events...")
+    #         for _, swap in swap_v3_df.iterrows():
+    #             pair_address = swap['pair_address']
+    #             sender = swap['sender']
+    #             recipient = swap['recipient']
                 
-                # Determine token position (0 or 1) in the pair
-                token_position = pair_token_positions.get(pair_address, 0)
+    #             # Determine token position (0 or 1) in the pair
+    #             token_position = pair_token_positions.get(pair_address, 0)
                 
-                if token_position == 0:
-                    # Our token is token0
-                    amount = int(swap['amount0'])
-                else:
-                    # Our token is token1
-                    amount = int(swap['amount1'])
+    #             if token_position == 0:
+    #                 # Our token is token0
+    #                 amount = int(swap['amount0'])
+    #             else:
+    #                 # Our token is token1
+    #                 amount = int(swap['amount1'])
                 
-                # V3 amounts can be positive or negative
-                # Positive amount = tokens going to the pool (user losing tokens)
-                # Negative amount = tokens coming from the pool (user gaining tokens)
+    #             # V3 amounts can be positive or negative
+    #             # Positive amount = tokens going to the pool (user losing tokens)
+    #             # Negative amount = tokens coming from the pool (user gaining tokens)
                 
-                if amount > 0:
-                    # User is sending tokens to the pool
-                    balances[sender] -= amount
-                elif amount < 0:
-                    # User is receiving tokens from the pool
-                    balances[recipient] += abs(amount)
+    #             if amount > 0:
+    #                 # User is sending tokens to the pool
+    #                 balances[sender] -= amount
+    #             elif amount < 0:
+    #                 # User is receiving tokens from the pool
+    #                 balances[recipient] += abs(amount)
         
-        # 3. Process Mint events (adding liquidity - users send tokens to pool)
-        if not mint_df.empty:
-            print(f"      Processing {len(mint_df)} mint events...")
-            for _, mint in mint_df.iterrows():
-                pair_address = mint['pair_address']
-                pair_version = mint['pair_version']
+    #     # 3. Process Mint events (adding liquidity - users send tokens to pool)
+    #     if not mint_df.empty:
+    #         print(f"      Processing {len(mint_df)} mint events...")
+    #         for _, mint in mint_df.iterrows():
+    #             pair_address = mint['pair_address']
+    #             pair_version = mint['pair_version']
                 
-                # Determine token position (0 or 1) in the pair
-                token_position = pair_token_positions.get(pair_address, 0)
+    #             # Determine token position (0 or 1) in the pair
+    #             token_position = pair_token_positions.get(pair_address, 0)
                 
-                if "v2" in pair_version.lower():
-                    # V2 Mint: sender provides liquidity
-                    sender = mint['sender']
+    #             if "v2" in pair_version.lower():
+    #                 # V2 Mint: sender provides liquidity
+    #                 sender = mint['sender']
                     
-                    if token_position == 0:
-                        amount = int(mint['amount0'])
-                    else:
-                        amount = int(mint['amount1'])
+    #                 if token_position == 0:
+    #                     amount = int(mint['amount0'])
+    #                 else:
+    #                     amount = int(mint['amount1'])
                     
-                    # User sends tokens to pool (balance decreases)
-                    balances[sender] -= amount
+    #                 # User sends tokens to pool (balance decreases)
+    #                 balances[sender] -= amount
                     
-                else:  # V3
-                    # V3 Mint: owner/sender provides liquidity
-                    # In V3, 'sender' is usually the position manager, 'owner' is the actual user
-                    owner = mint.get('owner', mint.get('sender', 'N/A'))
+    #             else:  # V3
+    #                 # V3 Mint: owner/sender provides liquidity
+    #                 # In V3, 'sender' is usually the position manager, 'owner' is the actual user
+    #                 owner = mint.get('owner', mint.get('sender', 'N/A'))
                     
-                    if token_position == 0:
-                        amount = int(mint['amount0'])
-                    else:
-                        amount = int(mint['amount1'])
+    #                 if token_position == 0:
+    #                     amount = int(mint['amount0'])
+    #                 else:
+    #                     amount = int(mint['amount1'])
                     
-                    # User sends tokens to pool (balance decreases)
-                    if owner != 'N/A':
-                        balances[owner] -= amount
+    #                 # User sends tokens to pool (balance decreases)
+    #                 if owner != 'N/A':
+    #                     balances[owner] -= amount
         
-        # 4. Process Burn events (removing liquidity - users receive tokens from pool)
-        if not burn_df.empty:
-            print(f"      Processing {len(burn_df)} burn events...")
-            for _, burn in burn_df.iterrows():
-                pair_address = burn['pair_address']
-                pair_version = burn['pair_version']
+    #     # 4. Process Burn events (removing liquidity - users receive tokens from pool)
+    #     if not burn_df.empty:
+    #         print(f"      Processing {len(burn_df)} burn events...")
+    #         for _, burn in burn_df.iterrows():
+    #             pair_address = burn['pair_address']
+    #             pair_version = burn['pair_version']
                 
-                # Determine token position (0 or 1) in the pair
-                token_position = pair_token_positions.get(pair_address, 0)
+    #             # Determine token position (0 or 1) in the pair
+    #             token_position = pair_token_positions.get(pair_address, 0)
                 
-                if "v2" in pair_version.lower():
-                    # V2 Burn: tokens sent to 'to' address
-                    to_addr = burn.get('to', burn.get('sender', 'N/A'))
+    #             if "v2" in pair_version.lower():
+    #                 # V2 Burn: tokens sent to 'to' address
+    #                 to_addr = burn.get('to', burn.get('sender', 'N/A'))
                     
-                    if token_position == 0:
-                        amount = int(burn['amount0'])
-                    else:
-                        amount = int(burn['amount1'])
+    #                 if token_position == 0:
+    #                     amount = int(burn['amount0'])
+    #                 else:
+    #                     amount = int(burn['amount1'])
                     
-                    # User receives tokens from pool (balance increases)
-                    if to_addr != 'N/A':
-                        balances[to_addr] += amount
+    #                 # User receives tokens from pool (balance increases)
+    #                 if to_addr != 'N/A':
+    #                     balances[to_addr] += amount
                         
-                else:  # V3
-                    # V3 Burn: owner receives the tokens
-                    owner = burn.get('owner', 'N/A')
+    #             else:  # V3
+    #                 # V3 Burn: owner receives the tokens
+    #                 owner = burn.get('owner', 'N/A')
                     
-                    if token_position == 0:
-                        amount = int(burn['amount0'])
-                    else:
-                        amount = int(burn['amount1'])
+    #                 if token_position == 0:
+    #                     amount = int(burn['amount0'])
+    #                 else:
+    #                     amount = int(burn['amount1'])
                     
-                    # User receives tokens from pool (balance increases)
-                    if owner != 'N/A':
-                        balances[owner] += amount
+    #                 # User receives tokens from pool (balance increases)
+    #                 if owner != 'N/A':
+    #                     balances[owner] += amount
         
-        # 5. Convert to DataFrame and filter out zero/negative balances
-        balance_data = []
-        for address, balance in balances.items():
-            if balance > 0:  # Only include addresses with positive balances
-                balance_data.append({
-                    "address": address,
-                    "balance": balance,
-                    "balance_formatted": f"{balance:,}",  # Human readable format
-                    "token_address": token_address
-                })
+    #     # 5. Convert to DataFrame and filter out zero/negative balances
+    #     balance_data = []
+    #     for address, balance in balances.items():
+    #         if balance > 0:  # Only include addresses with positive balances
+    #             balance_data.append({
+    #                 "address": address,
+    #                 "balance": balance,
+    #                 "balance_formatted": f"{balance:,}",  # Human readable format
+    #                 "token_address": token_address
+    #             })
         
-        # Sort by balance descending
-        balance_df = pd.DataFrame(balance_data)
-        if not balance_df.empty:
-            balance_df = balance_df.sort_values('balance', ascending=False).reset_index(drop=True)
-            print(f"      ✅ Calculated balances for {len(balance_df)} addresses with positive balances")
-        else:
-            print(f"      ⚠️  No addresses with positive balances found")
+    #     # Sort by balance descending
+    #     balance_df = pd.DataFrame(balance_data)
+    #     if not balance_df.empty:
+    #         balance_df = balance_df.sort_values('balance', ascending=False).reset_index(drop=True)
+    #         print(f"      ✅ Calculated balances for {len(balance_df)} addresses with positive balances")
+    #     else:
+    #         print(f"      ⚠️  No addresses with positive balances found")
         
-        return balance_df
+    #     return balance_df
 
     async def analyze_token_to_excel(self, token_data: Dict[str, Any], from_block: int = 0, to_block: Optional[int] = None) -> str:
         """Analyze a single token and export all data to Excel file."""
@@ -1702,27 +1702,27 @@ class TokenAnalyticsExcel:
                 combined_burns.to_excel(writer, sheet_name='Burns', index=False)
                 print(f"   ✅ Exported {len(combined_burns)} Burn events to 'Burns' sheet")
             
-            # 4. Calculate and export token balances (now including mints and burns)
-            try:
-                balance_df = self.calculate_token_balances(
-                    token_address, transfer_df, combined_swaps_v2, combined_swaps_v3, 
-                    combined_mints, combined_burns, token_data
-                )
+            # # 4. Calculate and export token balances (now including mints and burns)
+            # try:
+            #     balance_df = self.calculate_token_balances(
+            #         token_address, transfer_df, combined_swaps_v2, combined_swaps_v3, 
+            #         combined_mints, combined_burns, token_data
+            #     )
                 
-                if not balance_df.empty:
-                    balance_df.to_excel(writer, sheet_name='Token_Balances', index=False)
-                    print(f"   ✅ Exported {len(balance_df)} token balances to 'Token_Balances' sheet")
+            #     if not balance_df.empty:
+            #         balance_df.to_excel(writer, sheet_name='Token_Balances', index=False)
+            #         print(f"   ✅ Exported {len(balance_df)} token balances to 'Token_Balances' sheet")
                     
-                    # Create top holders summary
-                    top_holders = balance_df.head(20)  # Top 20 holders
-                    top_holders.to_excel(writer, sheet_name='Top_Holders', index=False)
-                    print(f"   ✅ Exported top {len(top_holders)} holders to 'Top_Holders' sheet")
-                else:
-                    print(f"   ⚠️  No token balances to export")
+            #         # Create top holders summary
+            #         top_holders = balance_df.head(20)  # Top 20 holders
+            #         top_holders.to_excel(writer, sheet_name='Top_Holders', index=False)
+            #         print(f"   ✅ Exported top {len(top_holders)} holders to 'Top_Holders' sheet")
+            #     else:
+            #         print(f"   ⚠️  No token balances to export")
                     
-            except Exception as e:
-                print(f"   ❌ Error calculating token balances: {e}")
-                balance_df = pd.DataFrame()  # Create empty DataFrame for summary
+            # except Exception as e:
+            #     print(f"   ❌ Error calculating token balances: {e}")
+            #     balance_df = pd.DataFrame()  # Create empty DataFrame for summary
             
             # 5. 🕵️ WASH TRADING ANALYSIS - NEW FEATURE!
             try:
@@ -1861,9 +1861,12 @@ class TokenAnalyticsExcel:
                         print(f"   ✅ Exported aggregated timeline with {len(aggregated_timeline_export_final)} transactions to 'Aggregated_Timeline' sheet")
                         
                         # 🆕 SAVE AGGREGATED TIMELINE AS JSON
-                        json_filename = f"aggregated_timeline_{token_address}.json"
+                        json_filename = f"aggregated_timeline.json"
                         json_filepath = os.path.join(self.output_dir, json_filename)
+                        # json_filename = f"./aggregated_timeline.json"
                         
+
+
                         # Convert DataFrame to JSON-serializable format
                         aggregated_json_data = aggregated_timeline_export_final.to_dict('records')
                         
