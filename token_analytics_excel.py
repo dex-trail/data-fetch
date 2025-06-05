@@ -1595,7 +1595,7 @@ class TokenAnalyticsExcel:
             print(f"   📊 Block range: {from_block} to latest")
         
         # Create filename based on token address
-        filename_base = f"token_analysis_{token_address}"
+        filename_base = f"token_analysis"
         
         # Add block range to filename if custom range is specified
         if from_block != 0 or to_block is not None:
